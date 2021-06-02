@@ -315,6 +315,9 @@ func (s *Storage) Unlock(key string) error {
 func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
+	if err != nil && errors.Is(err, skydb.ErrNotFound) {
+		return Item{}, 0, errNotExist
+	}
 	if err != nil {
 		return Item{}, 0, err
 	}

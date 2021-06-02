@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"os"
+	"strings"
 
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/node/api/client"
@@ -13,6 +14,8 @@ import (
 	"go.sia.tech/siad/modules"
 	"go.sia.tech/siad/types"
 )
+
+var ErrNotFound = errors.New("entry not found")
 
 // SkyDBI is the interface for communicating with SkyDB. We use an interface, so
 // we can easily override it for testing purposes.
@@ -66,6 +69,9 @@ func NewCustom(opts client.Options, sk crypto.SecretKey, pk crypto.PublicKey) *S
 // Read retrieves from SkyDB the data that corresponds to the given key set.
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
+	if err != nil && strings.Contains(err.Error(), "registry entry not found within given time") {
+		return nil, 0, ErrNotFound
+	}
 	if err != nil {
 		return nil, 0, errors.AddContext(err, "failed to read from registry")
 	}

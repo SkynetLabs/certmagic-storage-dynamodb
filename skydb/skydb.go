@@ -145,13 +145,16 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 	buf := bytes.NewReader(content)
 	fNameBytes := sha1.Sum(content)
 	fName := base64.StdEncoding.EncodeToString(fNameBytes[:])
+	if strings.HasSuffix(fName, "/") {
+		fName = fName[1:]
+	}
 	sp, err := skymodules.NewSiaPath(fName)
 	if err != nil {
 		return "", errors.AddContext(err, "failed to create new sia path")
 	}
 	sup := &skymodules.SkyfileUploadParameters{
 		SiaPath:  sp,
-		Filename: fName,
+		Filename: "cert.json", // fName
 		Force:    true,
 		Mode:     skymodules.DefaultFilePerm,
 		Reader:   buf,

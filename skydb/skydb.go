@@ -58,14 +58,6 @@ func New() (*SkyDB, error) {
 	return skydb, nil
 }
 
-// NewCustom creates a new SkyDB client with the given options.
-func NewCustom(opts client.Options, sk crypto.SecretKey, pk crypto.PublicKey) *SkyDB {
-	skydb := &SkyDB{Client: &client.Client{opts}}
-	skydb.sk = sk
-	skydb.pk = pk
-	return skydb
-}
-
 // Read retrieves from SkyDB the data that corresponds to the given key set.
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)

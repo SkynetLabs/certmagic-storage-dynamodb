@@ -279,6 +279,10 @@ func TestSkyDBStorage_LoadErrNotExist(t *testing.T) {
 	}
 
 	_, err = storage.Load("notarealkey")
+	if err == nil {
+		t.Error("Expected an ErrNotExist, got no error.")
+		return
+	}
 	_, isNotErrNotExist := err.(certmagic.ErrNotExist)
 	if !isNotErrNotExist {
 		t.Errorf("err was not a ErrNotExist, got: %s", err.Error())

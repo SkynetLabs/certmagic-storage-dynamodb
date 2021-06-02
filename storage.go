@@ -177,8 +177,8 @@ func (s *Storage) Load(key string) ([]byte, error) {
 	}
 
 	domainItem, _, err := s.getItem(key)
-	if err != nil && strings.Contains(err.Error(), "doesn't exist") {
-		return []byte{}, nil
+	if err != nil {
+		return []byte{}, err
 	}
 	return domainItem.Contents, err
 }
@@ -272,7 +272,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	// Check for existing lock
 	for {
 		it, _, err := s.getItem(lockKey)
-		if err != nil && !strings.Contains(err.Error(), "doesn't exist") {
+		if err != nil && !errors.Is(err, errNotExist) {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
@@ -322,14 +322,14 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
 	if err != nil && errors.Is(err, skydb.ErrNotFound) {
-		return Item{}, 0, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
+		return Item{}, 0, errNotExist
 	}
 	if err != nil {
 		return Item{}, 0, err
 	}
 	// Check if `data` is empty, i.e. the item never existed.
 	if isEmpty(data) {
-		return Item{}, 0, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
+		return Item{}, 0, errNotExist
 	}
 	var it Item
 	err = json.Unmarshal(data, &it)

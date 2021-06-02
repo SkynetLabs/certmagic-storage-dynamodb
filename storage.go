@@ -113,11 +113,6 @@ func (s *Storage) Store(key string, value []byte) error {
 	}
 	dataKey := crypto.HashBytes([]byte(key))
 	// Get the item.
-	// Note: Getting the revision here and using it later has a theoretical
-	// chance of creating a race. This is because of the registry's internal
-	// behaviour of allowing an update of an existing revision if the hash of
-	// the data that comes second is numerically higher than the hash of the
-	// data that comes first. This isn't critical in our current use case.
 	it, rev, err := s.getItem(key)
 	if err != nil && !strings.Contains(err.Error(), "doesn't exist") {
 		return err

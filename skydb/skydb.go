@@ -2,7 +2,6 @@ package skydb
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"encoding/base64"
 	"os"
 	"strings"
@@ -43,13 +42,13 @@ func New() (*SkyDB, error) {
 	if len(sk) == 0 || len(pk) == 0 {
 		return nil, errors.New("missing SKYDB_SEC_KEY or SKYDB_PUB_KEY environment variable")
 	}
-	opts, err := client.DefaultOptions()
-	if err != nil {
-		return nil, errors.AddContext(err, "failed to get default client options")
-	}
 	skydEndpoint := os.Getenv("SKYDB_ENDPOINT")
 	if skydEndpoint == "" {
 		return nil, errors.New("missing SKYDB_ENDPOINT environment variable")
+	}
+	opts, err := client.DefaultOptions()
+	if err != nil {
+		return nil, errors.AddContext(err, "failed to get default client options")
 	}
 	opts.Address = skydEndpoint
 	skydb := &SkyDB{Client: &client.Client{opts}}
@@ -134,22 +133,12 @@ func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (s
 
 // uploadData uploads the given data to skynet and returns a SkylinkV1.
 func uploadData(c *client.Client, content []byte) (string, error) {
-	buf := bytes.NewReader(content)
-	fNameBytes := sha1.Sum(content)
-	fName := base64.StdEncoding.EncodeToString(fNameBytes[:])
-	if strings.HasSuffix(fName, "/") {
-		fName = fName[1:]
-	}
-	sp, err := skymodules.NewSiaPath(fName)
-	if err != nil {
-		return "", errors.AddContext(err, "failed to create new sia path")
-	}
 	sup := &skymodules.SkyfileUploadParameters{
-		SiaPath:  sp,
-		Filename: "cert.json", // fName
+		SiaPath:  skymodules.RandomSkynetFilePath(),
+		Filename: "data.json",
 		Force:    true,
 		Mode:     skymodules.DefaultFilePerm,
-		Reader:   buf,
+		Reader:   bytes.NewReader(content),
 	}
 	skylink, _, err := c.SkynetSkyfilePost(*sup)
 	if err != nil {

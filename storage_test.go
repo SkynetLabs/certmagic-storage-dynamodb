@@ -27,7 +27,7 @@ func (db *SkyDBTest) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	}
 	rec, exists := db.store[dataKey]
 	if !exists {
-		return []byte{}, 0, nil // TODO Verify that this is the correct behaviour
+		return []byte{}, 0, skydb.ErrNotFound
 	}
 	return rec.Data, rec.Revision, nil
 }

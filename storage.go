@@ -119,7 +119,7 @@ func (s *Storage) Store(key string, value []byte) error {
 	// the data that comes second is numerically higher than the hash of the
 	// data that comes first. This isn't critical in our current use case.
 	it, rev, err := s.getItem(key)
-	if err != nil && !errors.Is(err, errNotExist) {
+	if err != nil && strings.Contains(err.Error(), "doesn't exist") {
 		return err
 	}
 	keyList, keyListRev, err := s.keyList()
@@ -177,6 +177,9 @@ func (s *Storage) Load(key string) ([]byte, error) {
 	}
 
 	domainItem, _, err := s.getItem(key)
+	if err != nil && strings.Contains(err.Error(), "doesn't exist") {
+		return []byte{}, nil
+	}
 	return domainItem.Contents, err
 }
 
@@ -228,6 +231,9 @@ func (s *Storage) List(prefix string, _ bool) ([]string, error) {
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 	domainItem, _, err := s.getItem(key)
+	if err != nil && strings.Contains(err.Error(), "doesn't exist") {
+		return certmagic.KeyInfo{}, nil
+	}
 	if err != nil {
 		return certmagic.KeyInfo{}, err
 	}
@@ -266,7 +272,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	// Check for existing lock
 	for {
 		it, _, err := s.getItem(lockKey)
-		if err != nil && !errors.Is(err, errNotExist) {
+		if err != nil && strings.Contains(err.Error(), "doesn't exist") {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
@@ -316,14 +322,14 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
 	if err != nil && errors.Is(err, skydb.ErrNotFound) {
-		return Item{}, 0, errNotExist
+		return Item{}, 0, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
 	}
 	if err != nil {
 		return Item{}, 0, err
 	}
 	// Check if `data` is empty, i.e. the item never existed.
 	if isEmpty(data) {
-		return Item{}, 0, errNotExist
+		return Item{}, 0, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
 	}
 	var it Item
 	err = json.Unmarshal(data, &it)

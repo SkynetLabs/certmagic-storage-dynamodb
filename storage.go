@@ -119,7 +119,7 @@ func (s *Storage) Store(key string, value []byte) error {
 	// the data that comes second is numerically higher than the hash of the
 	// data that comes first. This isn't critical in our current use case.
 	it, rev, err := s.getItem(key)
-	if err != nil && strings.Contains(err.Error(), "doesn't exist") {
+	if err != nil && !strings.Contains(err.Error(), "doesn't exist") {
 		return err
 	}
 	keyList, keyListRev, err := s.keyList()
@@ -272,7 +272,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	// Check for existing lock
 	for {
 		it, _, err := s.getItem(lockKey)
-		if err != nil && strings.Contains(err.Error(), "doesn't exist") {
+		if err != nil && !strings.Contains(err.Error(), "doesn't exist") {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one

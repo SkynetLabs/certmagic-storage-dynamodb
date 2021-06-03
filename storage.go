@@ -27,9 +27,9 @@ const (
 )
 
 var (
-	// The registry doesn't support DELETE as an operation. The next best thing
-	// is to write an empty record to it. This is the empty record that we're
-	// going to be writing.
+	// The registry doesn't support DELETE as an operation but setting a
+	// registry value to an empty version 2 skylink will result in 404 when we
+	// try to read from the registry.
 	emptyRegistryEntry = [34]byte{}
 
 	// errNotExist is returned when the requested item doesn't exist.

@@ -126,7 +126,7 @@ func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (s
 	var sl skymodules.Skylink
 	err = sl.LoadBytes(srv.Data)
 	if err != nil {
-		return skymodules.Skylink{}, 0, errors.AddContext(err, "registry value is not a SkylinkV2")
+		return skymodules.Skylink{}, 0, errors.AddContext(err, "registry value is not a valid skylink")
 	}
 	return sl, srv.Revision, nil
 }

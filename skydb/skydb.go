@@ -76,7 +76,7 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
-	sp := skynetFilePath(dataKey)
+	sp := skynetFilePath(crypto.HashAll(db.pk, dataKey))
 	skylink, err := uploadData(db.Client, data, sp)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")

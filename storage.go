@@ -1,35 +1,46 @@
-package dynamodbstorage
+package skydbstorage
 
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/skynetlabs/certmagic-storage-skydb/skydb"
 
-	caddy "github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
+	"go.sia.tech/siad/crypto"
 )
 
 const (
-	contentsAttribute    = "Contents"
-	primaryKeyAttribute  = "PrimaryKey"
-	lastUpdatedAttribute = "LastUpdated"
-	lockTimeoutMinutes   = caddy.Duration(5 * time.Minute)
-	lockPollingInterval  = caddy.Duration(5 * time.Second)
+	lockTimeoutMinutes  = caddy.Duration(5 * time.Minute)
+	lockPollingInterval = caddy.Duration(5 * time.Second)
+
+	// keyListDataKeyString points to a global list of known keys. We need this
+	// list for the List functionality. The list will be updated each time we
+	// Store or Delete a key.
+	keyListDataKeyString = "FvyIax1rlzkpOKsGHGYO4qi/bNgXnjvWFpNXXq13hRc="
+)
+
+var (
+	// The registry doesn't support DELETE as an operation but setting a
+	// registry value to an empty version 2 skylink will result in 404 when we
+	// try to read from the registry.
+	emptyRegistryEntry = [34]byte{}
+
+	// errNotExist is returned when the requested item doesn't exist.
+	errNotExist certmagic.ErrNotExist = errors.New("item doesn't exist")
 )
 
 // Item holds structure of domain, certificate data,
-// and last updated for marshaling with DynamoDb
+// and last updated for marshaling with SkyDB
 type Item struct {
 	PrimaryKey  string    `json:"PrimaryKey"`
-	Contents    string    `json:"Contents"`
+	Contents    []byte    `json:"Contents"`
 	LastUpdated time.Time `json:"LastUpdated"`
 }
 
@@ -38,41 +49,56 @@ type Item struct {
 // Also implements certmagic.Locker to facilitate locking
 // and unlocking of cert data during storage
 type Storage struct {
-	Table               string           `json:"table,omitempty"`
-	AwsSession          *session.Session `json:"-"`
-	AwsEndpoint         string           `json:"aws_endpoint,omitempty"`
-	AwsRegion           string           `json:"aws_region,omitempty"`
-	AwsDisableSSL       bool             `json:"aws_disable_ssl,omitempty"`
-	LockTimeout         caddy.Duration   `json:"lock_timeout,omitempty"`
-	LockPollingInterval caddy.Duration   `json:"lock_polling_interval,omitempty"`
+	SkyDB               skydb.SkyDBI   `json:"-"`
+	LockTimeout         caddy.Duration `json:"lock_timeout,omitempty"`
+	LockPollingInterval caddy.Duration `json:"lock_polling_interval,omitempty"`
+	KeyListDataKey      crypto.Hash    `json:"key_list_data_key"`
+}
+
+func NewStorage() (*Storage, error) {
+	s := &Storage{}
+	err := s.initConfig()
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+func NewStorageCustom(keyListDataKey crypto.Hash) (*Storage, error) {
+	s := &Storage{
+		KeyListDataKey: keyListDataKey,
+	}
+	err := s.initConfig()
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // initConfig initializes configuration for table name and AWS session
 func (s *Storage) initConfig() error {
-	if s.Table == "" {
-		return errors.New("config error: table name is required")
+	if s.SkyDB == nil {
+		sdb, err := skydb.New()
+		if err != nil {
+			return err
+		}
+		s.SkyDB = sdb
 	}
-
+	if isEmpty(s.KeyListDataKey[:]) {
+		dk, err := base64.StdEncoding.DecodeString(keyListDataKeyString)
+		if err != nil {
+			return errors.New("failed to decode key list dataKey. Error: " + err.Error())
+		}
+		if len(dk) != len(s.KeyListDataKey) {
+			return errors.New(fmt.Sprintf("bad size of key list dataKey. Expected %d, got %d.", len(s.KeyListDataKey), len(dk)))
+		}
+		copy(s.KeyListDataKey[:], dk)
+	}
 	if s.LockTimeout == 0 {
 		s.LockTimeout = lockTimeoutMinutes
 	}
 	if s.LockPollingInterval == 0 {
 		s.LockPollingInterval = lockPollingInterval
 	}
-
-	// Initialize AWS Session if needed
-	if s.AwsSession == nil {
-		var err error
-		s.AwsSession, err = session.NewSession(&aws.Config{
-			Endpoint:   &s.AwsEndpoint,
-			Region:     &s.AwsRegion,
-			DisableSSL: &s.AwsDisableSSL,
-		})
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -82,30 +108,57 @@ func (s *Storage) Store(key string, value []byte) error {
 		return err
 	}
 
-	encVal := base64.StdEncoding.EncodeToString(value)
-
 	if key == "" {
 		return errors.New("key must not be empty")
 	}
-
-	svc := dynamodb.New(s.AwsSession)
-	input := &dynamodb.PutItemInput{
-		Item: map[string]*dynamodb.AttributeValue{
-			primaryKeyAttribute: {
-				S: aws.String(key),
-			},
-			contentsAttribute: {
-				S: aws.String(encVal),
-			},
-			lastUpdatedAttribute: {
-				S: aws.String(time.Now().Format(time.RFC3339)),
-			},
-		},
-		TableName: aws.String(s.Table),
+	dataKey := crypto.HashBytes([]byte(key))
+	// Get the item.
+	it, rev, err := s.getItem(key)
+	if err != nil && !strings.Contains(err.Error(), "doesn't exist") {
+		return err
+	}
+	keyList, keyListRev, err := s.keyList()
+	if err != nil {
+		return err
+	}
+	if keyList == nil {
+		keyList = make(map[string]bool)
 	}
 
-	_, err := svc.PutItem(input)
-	return err
+	keyListChanged := false
+	// Are we deleting the entry? If so, remove the key from the key list.
+	// Otherwise add it to the list.
+	if slicesEqual(value, emptyRegistryEntry[:]) {
+		delete(keyList, key)
+		keyListChanged = true
+	} else {
+		_, exists := keyList[key]
+		if !exists {
+			keyList[key] = true
+			keyListChanged = true
+		}
+	}
+	if keyListChanged {
+		bytes, err := json.Marshal(keyList)
+		if err != nil {
+			return errors.New("failed to serialise a new key list. Error: " + err.Error())
+		}
+		err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
+		if err != nil {
+			return errors.New("failed to store the key list. Error: " + err.Error())
+		}
+	}
+
+	// Update the item.
+	it.PrimaryKey = key
+	it.Contents = value
+	it.LastUpdated = time.Now().UTC()
+	// Store the key's new value
+	bytes, err := json.Marshal(it)
+	if err != nil {
+		return errors.New("failed to marshal the item record. Error: " + err.Error())
+	}
+	return s.SkyDB.Write(bytes, dataKey, rev+1)
 }
 
 // Load retrieves the value at key.
@@ -118,36 +171,16 @@ func (s *Storage) Load(key string) ([]byte, error) {
 		return []byte{}, errors.New("key must not be empty")
 	}
 
-	domainItem, err := s.getItem(key)
-	return []byte(domainItem.Contents), err
+	domainItem, _, err := s.getItem(key)
+	if err != nil {
+		return []byte{}, err
+	}
+	return domainItem.Contents, err
 }
 
 // Delete deletes key.
 func (s *Storage) Delete(key string) error {
-	if err := s.initConfig(); err != nil {
-		return err
-	}
-
-	if key == "" {
-		return errors.New("key must not be empty")
-	}
-
-	svc := dynamodb.New(s.AwsSession)
-	input := &dynamodb.DeleteItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			primaryKeyAttribute: {
-				S: aws.String(key),
-			},
-		},
-		TableName: aws.String(s.Table),
-	}
-
-	_, err := svc.DeleteItem(input)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return s.Store(key, emptyRegistryEntry[:])
 }
 
 // Exists returns true if the key exists
@@ -155,7 +188,7 @@ func (s *Storage) Delete(key string) error {
 func (s *Storage) Exists(key string) bool {
 
 	cert, err := s.Load(key)
-	if string(cert) != "" && err == nil {
+	if err == nil && !isEmpty(cert[:]) {
 		return true
 	}
 
@@ -167,7 +200,7 @@ func (s *Storage) Exists(key string) bool {
 // will be enumerated (i.e. "directories"
 // should be walked); otherwise, only keys
 // prefixed exactly by prefix will be listed.
-func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
+func (s *Storage) List(prefix string, _ bool) ([]string, error) {
 	if err := s.initConfig(); err != nil {
 		return []string{}, err
 	}
@@ -176,56 +209,29 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 		return []string{}, errors.New("key prefix must not be empty")
 	}
 
-	svc := dynamodb.New(s.AwsSession)
-	input := &dynamodb.ScanInput{
-		ExpressionAttributeNames: map[string]*string{
-			"#D": aws.String(primaryKeyAttribute),
-		},
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":p": {
-				S: aws.String(prefix),
-			},
-		},
-		FilterExpression: aws.String("begins_with(#D, :p)"),
-		TableName:        aws.String(s.Table),
-		ConsistentRead:   aws.Bool(true),
+	keyList, _, err := s.keyList()
+	if err != nil {
+		return nil, err
 	}
 
 	var matchingKeys []string
-	pageNum := 0
-	err := svc.ScanPages(input,
-		func(page *dynamodb.ScanOutput, lastPage bool) bool {
-			pageNum++
-
-			var items []Item
-			err := dynamodbattribute.UnmarshalListOfMaps(page.Items, &items)
-			if err != nil {
-				log.Printf("error unmarshaling page of items: %s", err.Error())
-				return false
-			}
-
-			for _, i := range items {
-				matchingKeys = append(matchingKeys, i.PrimaryKey)
-			}
-
-			return !lastPage
-		})
-
-	if err != nil {
-		return []string{}, err
+	for key := range keyList {
+		if strings.HasPrefix(key, prefix) {
+			matchingKeys = append(matchingKeys, key)
+		}
 	}
-
 	return matchingKeys, nil
 }
 
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
-
-	domainItem, err := s.getItem(key)
+	domainItem, _, err := s.getItem(key)
+	if err != nil && strings.Contains(err.Error(), "doesn't exist") {
+		return certmagic.KeyInfo{}, nil
+	}
 	if err != nil {
 		return certmagic.KeyInfo{}, err
 	}
-
 	return certmagic.KeyInfo{
 		Key:        key,
 		Modified:   domainItem.LastUpdated,
@@ -260,19 +266,16 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 	// Check for existing lock
 	for {
-		existing, err := s.getItem(lockKey)
-		_, isErrNotExists := err.(certmagic.ErrNotExist)
-		if err != nil && !isErrNotExists {
+		it, _, err := s.getItem(lockKey)
+		if err != nil && !errors.Is(err, errNotExist) {
 			return err
 		}
-
 		// if lock doesn't exist or is empty, break to create a new one
-		if isErrNotExists || existing.Contents == "" {
+		if isEmpty(it.Contents) {
 			break
 		}
-
 		// Lock exists, check if expired or sleep 5 seconds and check again
-		expires, err := time.Parse(time.RFC3339, existing.Contents)
+		expires, err := time.Parse(time.RFC3339, string(it.Contents))
 		if err != nil {
 			return err
 		}
@@ -309,39 +312,61 @@ func (s *Storage) Unlock(key string) error {
 	return s.Delete(lockKey)
 }
 
-func (s *Storage) getItem(key string) (Item, error) {
-	svc := dynamodb.New(s.AwsSession)
-	input := &dynamodb.GetItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			primaryKeyAttribute: {
-				S: aws.String(key),
-			},
-		},
-		TableName:      aws.String(s.Table),
-		ConsistentRead: aws.Bool(true),
+// getItem fetches an ItemRecord from SkyDB.
+func (s *Storage) getItem(key string) (Item, uint64, error) {
+	dataKey := crypto.HashBytes([]byte(key))
+	data, rev, err := s.SkyDB.Read(dataKey)
+	if err != nil && errors.Is(err, skydb.ErrNotFound) {
+		return Item{}, 0, errNotExist
 	}
-
-	result, err := svc.GetItem(input)
 	if err != nil {
-		return Item{}, err
+		return Item{}, 0, err
 	}
-
-	var domainItem Item
-	err = dynamodbattribute.UnmarshalMap(result.Item, &domainItem)
+	// Check if `data` is empty, i.e. the item never existed.
+	if isEmpty(data) {
+		return Item{}, 0, errNotExist
+	}
+	var it Item
+	err = json.Unmarshal(data, &it)
 	if err != nil {
-		return Item{}, err
+		return Item{}, 0, err
 	}
-	if domainItem.Contents == "" {
-		return Item{}, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
-	}
+	return it, rev, nil
+}
 
-	dec, err := base64.StdEncoding.DecodeString(domainItem.Contents)
+func (s *Storage) keyList() (map[string]bool, uint64, error) {
+	keyList := make(map[string]bool)
+	klData, rev, err := s.SkyDB.Read(s.KeyListDataKey)
 	if err != nil {
-		return Item{}, err
+		return nil, 0, errors.New("failed to get key list from SkyDB. Error: " + err.Error())
 	}
-	domainItem.Contents = string(dec)
+	if !isEmpty(klData) {
+		err = json.Unmarshal(klData, &keyList)
+		if err != nil {
+			return nil, 0, errors.New("failed to unmarshal key list. Error: " + err.Error())
+		}
+	}
+	return keyList, rev, nil
+}
+func isEmpty(data []byte) bool {
+	for _, v := range data {
+		if v > 0 {
+			return false
+		}
+	}
+	return true
+}
 
-	return domainItem, nil
+func slicesEqual(s1, s2 []byte) bool {
+	if len(s1) != len(s2) {
+		return false
+	}
+	for i := 0; i < len(s1); i++ {
+		if s1[i] != s2[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Interface guard

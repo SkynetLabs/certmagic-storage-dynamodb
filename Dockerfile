@@ -2,9 +2,9 @@ FROM golang
 
 RUN apt-get update -y
 
-COPY . /certmagic-storage-dynamodb
+COPY . /certmagic-storage-skydb
 
-WORKDIR /certmagic-storage-dynamodb
+WORKDIR /certmagic-storage-skydb
 
 RUN go get ./...
 

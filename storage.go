@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -84,14 +85,11 @@ func (s *Storage) initConfig() error {
 		s.SkyDB = sdb
 	}
 	if isEmpty(s.KeyListDataKey[:]) {
-		dk, err := base64.StdEncoding.DecodeString(keyListDataKeyString)
+		dk, err := dataKey()
 		if err != nil {
-			return errors.New("failed to decode key list dataKey. Error: " + err.Error())
+			return err
 		}
-		if len(dk) != len(s.KeyListDataKey) {
-			return errors.New(fmt.Sprintf("bad size of key list dataKey. Expected %d, got %d.", len(s.KeyListDataKey), len(dk)))
-		}
-		copy(s.KeyListDataKey[:], dk)
+		s.KeyListDataKey = dk
 	}
 	if s.LockTimeout == 0 {
 		s.LockTimeout = lockTimeoutMinutes
@@ -367,6 +365,17 @@ func slicesEqual(s1, s2 []byte) bool {
 		}
 	}
 	return true
+}
+
+// dataKey generates a dataKey value based on the SKYDB_ENTROPY environment
+// variable.
+func dataKey() (crypto.Hash, error) {
+	ent, err := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_ENTROPY"))
+	if err != nil || len(ent) != 32 {
+		errmsg := fmt.Sprintf("missing or invalid SKYDB_ENDPOINT environment variable. it needs to contain 32 bytes of entropy. error: %v", err)
+		return crypto.Hash{}, errors.New(errmsg)
+	}
+	return crypto.HashAll(ent, "dataKey"), nil
 }
 
 // Interface guard

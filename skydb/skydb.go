@@ -3,6 +3,7 @@ package skydb
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"strings"
 
@@ -34,14 +35,14 @@ type SkyDB struct {
 // to use "Sia-Agent" as user agent and to get the password for skyd from the
 // environment.
 func New() (*SkyDB, error) {
-	sk, err1 := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_SEC_KEY"))
-	pk, err2 := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_PUB_KEY"))
-	if err1 != nil || err2 != nil {
-		return nil, errors.AddContext(errors.Compose(err1, err2), "failed to decode SKYDB_SEC_KEY and/or SKYDB_PUB_KEY")
+	var entropy [32]byte
+	ent, err := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_ENTROPY"))
+	if err != nil || len(ent) != 32 {
+		errmsg := fmt.Sprintf("missing or invalid SKYDB_ENDPOINT environment variable. it needs to contain 32 bytes of entropy. error: %v", err)
+		return nil, errors.New(errmsg)
 	}
-	if len(sk) == 0 || len(pk) == 0 {
-		return nil, errors.New("missing SKYDB_SEC_KEY or SKYDB_PUB_KEY environment variable")
-	}
+	copy(entropy[:], ent)
+	sk, pk := crypto.GenerateKeyPairDeterministic(entropy)
 	skydEndpoint := os.Getenv("SKYDB_ENDPOINT")
 	if skydEndpoint == "" {
 		return nil, errors.New("missing SKYDB_ENDPOINT environment variable")
@@ -51,9 +52,11 @@ func New() (*SkyDB, error) {
 		return nil, errors.AddContext(err, "failed to get default client options")
 	}
 	opts.Address = skydEndpoint
-	skydb := &SkyDB{Client: &client.Client{opts}}
-	copy(skydb.sk[:], sk)
-	copy(skydb.pk[:], pk)
+	skydb := &SkyDB{
+		Client: &client.Client{opts},
+		sk:     sk,
+		pk:     pk,
+	}
 	return skydb, nil
 }
 

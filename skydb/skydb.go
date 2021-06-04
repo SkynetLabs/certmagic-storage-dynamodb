@@ -78,7 +78,8 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
-	skylink, err := uploadData(db.Client, data)
+	sp := skynetFilePath(crypto.HashAll(db.pk, dataKey))
+	skylink, err := uploadData(db.Client, data, sp)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")
 	}
@@ -98,10 +99,7 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 		return skymodules.Skylink{}, errors.AddContext(err, "failed to load skylink data")
 	}
 	// Update the registry with that link.
-	spk := types.SiaPublicKey{
-		Algorithm: types.SignatureEd25519,
-		Key:       pk[:],
-	}
+	spk := types.Ed25519PublicKey(pk)
 	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev).Sign(sk)
 	err = c.RegistryUpdate(spk, dataKey, srv.Revision, srv.Signature, sl)
 	if err != nil {
@@ -113,11 +111,7 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 // registryRead reads a registry entry and returns the SkylinkV2 it contains, as well
 // as the revision.
 func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (skymodules.Skylink, uint64, error) {
-	spk := types.SiaPublicKey{
-		Algorithm: types.SignatureEd25519,
-		Key:       pk[:],
-	}
-
+	spk := types.Ed25519PublicKey(pk)
 	srv, err := c.RegistryRead(spk, dataKey)
 	if err != nil {
 		return skymodules.Skylink{}, 0, errors.AddContext(err, "failed to read from the registry")
@@ -135,9 +129,9 @@ func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (s
 }
 
 // uploadData uploads the given data to skynet and returns a SkylinkV1.
-func uploadData(c *client.Client, content []byte) (string, error) {
+func uploadData(c *client.Client, content []byte, sp skymodules.SiaPath) (string, error) {
 	sup := &skymodules.SkyfileUploadParameters{
-		SiaPath:  skymodules.RandomSkynetFilePath(),
+		SiaPath:  sp,
 		Filename: "data.json",
 		Force:    true,
 		Mode:     skymodules.DefaultFilePerm,
@@ -148,4 +142,11 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 		return "", errors.AddContext(err, "failed to upload")
 	}
 	return skylink, nil
+}
+
+// skynetFilePath returns a path that a Skyfile can be uploaded to. The path is
+// based on the provided dataKey.
+func skynetFilePath(dataKey crypto.Hash) (sp skymodules.SiaPath) {
+	sp.Path = fmt.Sprintf("%v/%v/%v/%v", skymodules.SkynetFolder.Path, dataKey[0:2], dataKey[2:4], dataKey[4:])
+	return
 }

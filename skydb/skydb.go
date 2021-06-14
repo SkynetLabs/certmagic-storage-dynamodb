@@ -35,13 +35,10 @@ type SkyDB struct {
 // to use "Sia-Agent" as user agent and to get the password for skyd from the
 // environment.
 func New() (*SkyDB, error) {
-	var entropy [32]byte
-	ent, err := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_ENTROPY"))
-	if err != nil || len(ent) != 32 {
-		errmsg := fmt.Sprintf("missing or invalid SKYDB_ENDPOINT environment variable. it needs to contain 32 bytes of entropy. error: %v", err)
-		return nil, errors.New(errmsg)
+	entropy, err := EntropyFromEnv()
+	if err != nil {
+		return nil, err
 	}
-	copy(entropy[:], ent)
 	sk, pk := crypto.GenerateKeyPairDeterministic(entropy)
 	skydEndpoint := os.Getenv("SKYDB_ENDPOINT")
 	if skydEndpoint == "" {
@@ -88,6 +85,30 @@ func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
 		return errors.AddContext(err, "failed to write to the registry")
 	}
 	return nil
+}
+
+// EntropyFromEnv returns the configured value of the SKYDB_ENTROPY environment
+// variable or an error.
+func EntropyFromEnv() ([32]byte, error) {
+	var e [32]byte
+	eStr := os.Getenv("SKYDB_ENTROPY")
+	if eStr == "" {
+		return e, errors.New("missing or empty SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of entropy.")
+	}
+	eBytes, err := base64.StdEncoding.DecodeString(eStr)
+	if err != nil || len(eBytes) != 32 {
+		errmsg := fmt.Sprintf("invalid SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of entropy. error: %v", err)
+		return e, errors.New(errmsg)
+	}
+	copy(e[:], eBytes)
+	return e, nil
+}
+
+// skynetFilePath returns a path that a Skyfile can be uploaded to. The path is
+// based on the provided dataKey.
+func skynetFilePath(dataKey crypto.Hash) (sp skymodules.SiaPath) {
+	sp.Path = fmt.Sprintf("%v/%v/%v/%v", skymodules.SkynetFolder.Path, dataKey[0:2], dataKey[2:4], dataKey[4:])
+	return
 }
 
 // registryWrite updates the registry entry with the given dataKey to contain the
@@ -142,11 +163,4 @@ func uploadData(c *client.Client, content []byte, sp skymodules.SiaPath) (string
 		return "", errors.AddContext(err, "failed to upload")
 	}
 	return skylink, nil
-}
-
-// skynetFilePath returns a path that a Skyfile can be uploaded to. The path is
-// based on the provided dataKey.
-func skynetFilePath(dataKey crypto.Hash) (sp skymodules.SiaPath) {
-	sp.Path = fmt.Sprintf("%v/%v/%v/%v", skymodules.SkynetFolder.Path, dataKey[0:2], dataKey[2:4], dataKey[4:])
-	return
 }

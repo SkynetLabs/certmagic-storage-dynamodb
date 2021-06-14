@@ -2,11 +2,9 @@ package skydbstorage
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -370,10 +368,9 @@ func slicesEqual(s1, s2 []byte) bool {
 // dataKey generates a dataKey value based on the SKYDB_ENTROPY environment
 // variable.
 func dataKey() (crypto.Hash, error) {
-	ent, err := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_ENTROPY"))
-	if err != nil || len(ent) != 32 {
-		errmsg := fmt.Sprintf("missing or invalid SKYDB_ENDPOINT environment variable. it needs to contain 32 bytes of entropy. error: %v", err)
-		return crypto.Hash{}, errors.New(errmsg)
+	ent, err := skydb.EntropyFromEnv()
+	if err != nil {
+		return crypto.Hash{}, err
 	}
 	return crypto.HashAll(ent, "dataKey"), nil
 }

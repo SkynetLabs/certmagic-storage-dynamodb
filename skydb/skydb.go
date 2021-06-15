@@ -89,16 +89,15 @@ func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
 
 // EntropyFromEnv returns the configured value of the SKYDB_ENTROPY environment
 // variable or an error.
-func EntropyFromEnv() ([32]byte, error) {
-	var e [32]byte
+func EntropyFromEnv() (crypto.Hash, error) {
+	var e crypto.Hash
 	eStr := os.Getenv("SKYDB_ENTROPY")
 	if eStr == "" {
-		return e, errors.New("missing or empty SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of entropy.")
+		return e, errors.New("missing or empty SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy.")
 	}
 	eBytes, err := base64.StdEncoding.DecodeString(eStr)
 	if err != nil || len(eBytes) != 32 {
-		errmsg := fmt.Sprintf("invalid SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of entropy. error: %v", err)
-		return e, errors.New(errmsg)
+		return e, fmt.Errorf("invalid SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy. error: %v", err)
 	}
 	copy(e[:], eBytes)
 	return e, nil

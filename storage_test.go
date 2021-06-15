@@ -3,7 +3,6 @@ package skydbstorage
 import (
 	"context"
 	"github.com/skynetlabs/certmagic-storage-skydb/skydb"
-	"gitlab.com/NebulousLabs/fastrand"
 	"go.sia.tech/siad/crypto"
 	"testing"
 	"time"
@@ -45,7 +44,6 @@ func (db *SkyDBTest) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
 
 func initTestStorage() (*Storage, error) {
 	var testKeyListDataKey crypto.Hash
-	fastrand.Read(testKeyListDataKey[:])
 	var skyDbTest skydb.SkyDBI = &SkyDBTest{}
 	return &Storage{
 		SkyDB:               skyDbTest,

@@ -75,8 +75,7 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
-	sp := skynetFilePath(crypto.HashAll(db.pk, dataKey))
-	skylink, err := uploadData(db.Client, data, sp)
+	skylink, err := uploadData(db.Client, data)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")
 	}
@@ -149,9 +148,9 @@ func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (s
 }
 
 // uploadData uploads the given data to skynet and returns a SkylinkV1.
-func uploadData(c *client.Client, content []byte, sp skymodules.SiaPath) (string, error) {
+func uploadData(c *client.Client, content []byte) (string, error) {
 	sup := &skymodules.SkyfileUploadParameters{
-		SiaPath:  sp,
+		SiaPath:  skymodules.RandomSkynetFilePath(),
 		Filename: "data.json",
 		Force:    true,
 		Mode:     skymodules.DefaultFilePerm,

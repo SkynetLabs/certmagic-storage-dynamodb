@@ -2,9 +2,7 @@ package skydbstorage
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,17 +11,13 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
+	"gitlab.com/NebulousLabs/errors"
 	"go.sia.tech/siad/crypto"
 )
 
 const (
 	lockTimeoutMinutes  = caddy.Duration(5 * time.Minute)
 	lockPollingInterval = caddy.Duration(5 * time.Second)
-
-	// keyListDataKeyString points to a global list of known keys. We need this
-	// list for the List functionality. The list will be updated each time we
-	// Store or Delete a key.
-	keyListDataKeyString = "FvyIax1rlzkpOKsGHGYO4qi/bNgXnjvWFpNXXq13hRc="
 )
 
 var (
@@ -63,16 +57,6 @@ func NewStorage() (*Storage, error) {
 	}
 	return s, nil
 }
-func NewStorageCustom(keyListDataKey crypto.Hash) (*Storage, error) {
-	s := &Storage{
-		KeyListDataKey: keyListDataKey,
-	}
-	err := s.initConfig()
-	if err != nil {
-		return nil, err
-	}
-	return s, nil
-}
 
 // initConfig initializes configuration for table name and AWS session
 func (s *Storage) initConfig() error {
@@ -82,16 +66,6 @@ func (s *Storage) initConfig() error {
 			return err
 		}
 		s.SkyDB = sdb
-	}
-	if isEmpty(s.KeyListDataKey[:]) {
-		dk, err := base64.StdEncoding.DecodeString(keyListDataKeyString)
-		if err != nil {
-			return errors.New("failed to decode key list dataKey. Error: " + err.Error())
-		}
-		if len(dk) != len(s.KeyListDataKey) {
-			return errors.New(fmt.Sprintf("bad size of key list dataKey. Expected %d, got %d.", len(s.KeyListDataKey), len(dk)))
-		}
-		copy(s.KeyListDataKey[:], dk)
 	}
 	if s.LockTimeout == 0 {
 		s.LockTimeout = lockTimeoutMinutes
@@ -111,14 +85,13 @@ func (s *Storage) Store(key string, value []byte) error {
 	if key == "" {
 		return errors.New("key must not be empty")
 	}
-	dataKey := crypto.HashBytes([]byte(key))
 	// Get the item.
 	it, rev, err := s.getItem(key)
-	if err != nil && !strings.Contains(err.Error(), "doesn't exist") {
+	if err != nil && !errors.Contains(err, errNotExist) {
 		return err
 	}
 	keyList, keyListRev, err := s.keyList()
-	if err != nil {
+	if err != nil && !errors.Contains(err, skydb.ErrNotFound) {
 		return err
 	}
 	if keyList == nil {
@@ -141,11 +114,11 @@ func (s *Storage) Store(key string, value []byte) error {
 	if keyListChanged {
 		bytes, err := json.Marshal(keyList)
 		if err != nil {
-			return errors.New("failed to serialise a new key list. Error: " + err.Error())
+			return errors.AddContext(err, "failed to serialise a new key list")
 		}
 		err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
 		if err != nil {
-			return errors.New("failed to store the key list. Error: " + err.Error())
+			return errors.AddContext(err, "failed to store the key list")
 		}
 	}
 
@@ -156,8 +129,9 @@ func (s *Storage) Store(key string, value []byte) error {
 	// Store the key's new value
 	bytes, err := json.Marshal(it)
 	if err != nil {
-		return errors.New("failed to marshal the item record. Error: " + err.Error())
+		return errors.AddContext(err, "failed to marshal the item record")
 	}
+	dataKey := crypto.HashBytes([]byte(key))
 	return s.SkyDB.Write(bytes, dataKey, rev+1)
 }
 
@@ -210,6 +184,9 @@ func (s *Storage) List(prefix string, _ bool) ([]string, error) {
 	}
 
 	keyList, _, err := s.keyList()
+	if err != nil && errors.Contains(err, skydb.ErrNotFound) {
+		return []string{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +203,7 @@ func (s *Storage) List(prefix string, _ bool) ([]string, error) {
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 	domainItem, _, err := s.getItem(key)
-	if err != nil && strings.Contains(err.Error(), "doesn't exist") {
+	if err != nil && !errors.Contains(err, errNotExist) {
 		return certmagic.KeyInfo{}, nil
 	}
 	if err != nil {
@@ -267,7 +244,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	// Check for existing lock
 	for {
 		it, _, err := s.getItem(lockKey)
-		if err != nil && !errors.Is(err, errNotExist) {
+		if err != nil && !errors.Contains(err, errNotExist) {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
@@ -316,7 +293,7 @@ func (s *Storage) Unlock(key string) error {
 func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
-	if err != nil && errors.Is(err, skydb.ErrNotFound) {
+	if err != nil && errors.Contains(err, skydb.ErrNotFound) {
 		return Item{}, 0, errNotExist
 	}
 	if err != nil {
@@ -338,12 +315,12 @@ func (s *Storage) keyList() (map[string]bool, uint64, error) {
 	keyList := make(map[string]bool)
 	klData, rev, err := s.SkyDB.Read(s.KeyListDataKey)
 	if err != nil {
-		return nil, 0, errors.New("failed to get key list from SkyDB. Error: " + err.Error())
+		return nil, 0, errors.AddContext(err, "failed to get key list from SkyDB")
 	}
 	if !isEmpty(klData) {
 		err = json.Unmarshal(klData, &keyList)
 		if err != nil {
-			return nil, 0, errors.New("failed to unmarshal key list. Error: " + err.Error())
+			return nil, 0, errors.AddContext(err, "failed to unmarshal key list")
 		}
 	}
 	return keyList, rev, nil

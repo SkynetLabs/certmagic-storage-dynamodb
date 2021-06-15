@@ -35,14 +35,11 @@ type SkyDB struct {
 // to use "Sia-Agent" as user agent and to get the password for skyd from the
 // environment.
 func New() (*SkyDB, error) {
-	sk, err1 := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_SEC_KEY"))
-	pk, err2 := base64.StdEncoding.DecodeString(os.Getenv("SKYDB_PUB_KEY"))
-	if err1 != nil || err2 != nil {
-		return nil, errors.AddContext(errors.Compose(err1, err2), "failed to decode SKYDB_SEC_KEY and/or SKYDB_PUB_KEY")
+	entropy, err := EntropyFromEnv()
+	if err != nil {
+		return nil, err
 	}
-	if len(sk) == 0 || len(pk) == 0 {
-		return nil, errors.New("missing SKYDB_SEC_KEY or SKYDB_PUB_KEY environment variable")
-	}
+	sk, pk := crypto.GenerateKeyPairDeterministic(entropy)
 	skydEndpoint := os.Getenv("SKYDB_ENDPOINT")
 	if skydEndpoint == "" {
 		return nil, errors.New("missing SKYDB_ENDPOINT environment variable")
@@ -52,9 +49,11 @@ func New() (*SkyDB, error) {
 		return nil, errors.AddContext(err, "failed to get default client options")
 	}
 	opts.Address = skydEndpoint
-	skydb := &SkyDB{Client: &client.Client{opts}}
-	copy(skydb.sk[:], sk)
-	copy(skydb.pk[:], pk)
+	skydb := &SkyDB{
+		Client: &client.Client{opts},
+		sk:     sk,
+		pk:     pk,
+	}
 	return skydb, nil
 }
 
@@ -76,8 +75,7 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
-	sp := skynetFilePath(crypto.HashAll(db.pk, dataKey))
-	skylink, err := uploadData(db.Client, data, sp)
+	skylink, err := uploadData(db.Client, data)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")
 	}
@@ -86,6 +84,29 @@ func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
 		return errors.AddContext(err, "failed to write to the registry")
 	}
 	return nil
+}
+
+// EntropyFromEnv returns the configured value of the SKYDB_ENTROPY environment
+// variable or an error.
+func EntropyFromEnv() (crypto.Hash, error) {
+	var e crypto.Hash
+	eStr := os.Getenv("SKYDB_ENTROPY")
+	if eStr == "" {
+		return e, errors.New("missing or empty SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy.")
+	}
+	eBytes, err := base64.StdEncoding.DecodeString(eStr)
+	if err != nil || len(eBytes) != 32 {
+		return e, fmt.Errorf("invalid SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy. error: %v", err)
+	}
+	copy(e[:], eBytes)
+	return e, nil
+}
+
+// skynetFilePath returns a path that a Skyfile can be uploaded to. The path is
+// based on the provided dataKey.
+func skynetFilePath(dataKey crypto.Hash) (sp skymodules.SiaPath) {
+	sp.Path = fmt.Sprintf("%v/%v/%v/%v", skymodules.SkynetFolder.Path, dataKey[0:2], dataKey[2:4], dataKey[4:])
+	return
 }
 
 // registryWrite updates the registry entry with the given dataKey to contain the
@@ -127,9 +148,9 @@ func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (s
 }
 
 // uploadData uploads the given data to skynet and returns a SkylinkV1.
-func uploadData(c *client.Client, content []byte, sp skymodules.SiaPath) (string, error) {
+func uploadData(c *client.Client, content []byte) (string, error) {
 	sup := &skymodules.SkyfileUploadParameters{
-		SiaPath:  sp,
+		SiaPath:  skymodules.RandomSkynetFilePath(),
 		Filename: "data.json",
 		Force:    true,
 		Mode:     skymodules.DefaultFilePerm,
@@ -140,11 +161,4 @@ func uploadData(c *client.Client, content []byte, sp skymodules.SiaPath) (string
 		return "", errors.AddContext(err, "failed to upload")
 	}
 	return skylink, nil
-}
-
-// skynetFilePath returns a path that a Skyfile can be uploaded to. The path is
-// based on the provided dataKey.
-func skynetFilePath(dataKey crypto.Hash) (sp skymodules.SiaPath) {
-	sp.Path = fmt.Sprintf("%v/%v/%v/%v", skymodules.SkynetFolder.Path, dataKey[0:2], dataKey[2:4], dataKey[4:])
-	return
 }

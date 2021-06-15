@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/node/api/client"
@@ -102,13 +103,6 @@ func EntropyFromEnv() (crypto.Hash, error) {
 	return e, nil
 }
 
-// skynetFilePath returns a path that a Skyfile can be uploaded to. The path is
-// based on the provided dataKey.
-func skynetFilePath(dataKey crypto.Hash) (sp skymodules.SiaPath) {
-	sp.Path = fmt.Sprintf("%v/%v/%v/%v", skymodules.SkynetFolder.Path, dataKey[0:2], dataKey[2:4], dataKey[4:])
-	return
-}
-
 // registryWrite updates the registry entry with the given dataKey to contain the
 // given skylink. Returns a SkylinkV2.
 func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk crypto.PublicKey, dataKey crypto.Hash, rev uint64) (skymodules.Skylink, error) {
@@ -120,7 +114,16 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 	// Update the registry with that link.
 	spk := types.Ed25519PublicKey(pk)
 	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev).Sign(sk)
-	err = c.RegistryUpdate(spk, dataKey, srv.Revision, srv.Signature, sl)
+	// skyd might not be ready by the time we execute this, so we want to retry
+	// several times with increasing gaps in between.
+	for i := 0; i < 10; i++ {
+		err = c.RegistryUpdate(spk, dataKey, srv.Revision, srv.Signature, sl)
+		if err != nil && strings.Contains(err.Error(), "Module not loaded") {
+			time.Sleep(time.Duration(i) * 15 * time.Second)
+			continue
+		}
+		break
+	}
 	if err != nil {
 		return skymodules.Skylink{}, err
 	}
@@ -131,7 +134,18 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 // as the revision.
 func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (skymodules.Skylink, uint64, error) {
 	spk := types.Ed25519PublicKey(pk)
-	srv, err := c.RegistryRead(spk, dataKey)
+	var srv modules.SignedRegistryValue
+	var err error
+	// skyd might not be ready by the time we execute this, so we want to retry
+	// several times with increasing gaps in between.
+	for i := 0; i < 10; i++ {
+		srv, err = c.RegistryRead(spk, dataKey)
+		if err != nil && strings.Contains(err.Error(), "Module not loaded") {
+			time.Sleep(time.Duration(i) * 15 * time.Second)
+			continue
+		}
+		break
+	}
 	if err != nil {
 		return skymodules.Skylink{}, 0, errors.AddContext(err, "failed to read from the registry")
 	}
@@ -156,7 +170,18 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 		Mode:     skymodules.DefaultFilePerm,
 		Reader:   bytes.NewReader(content),
 	}
-	skylink, _, err := c.SkynetSkyfilePost(*sup)
+	var skylink string
+	var err error
+	// skyd might not be ready by the time we execute this, so we want to retry
+	// several times with increasing gaps in between.
+	for i := 0; i < 10; i++ {
+		skylink, _, err = c.SkynetSkyfilePost(*sup)
+		if err != nil && strings.Contains(err.Error(), "Module not loaded") {
+			time.Sleep(time.Duration(i) * 15 * time.Second)
+			continue
+		}
+		break
+	}
 	if err != nil {
 		return "", errors.AddContext(err, "failed to upload")
 	}

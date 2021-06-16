@@ -51,7 +51,7 @@ func New() (*SkyDB, error) {
 	}
 	opts.Address = skydEndpoint
 	skydb := &SkyDB{
-		Client: &client.Client{opts},
+		Client: &client.Client{Options: opts},
 		sk:     sk,
 		pk:     pk,
 	}

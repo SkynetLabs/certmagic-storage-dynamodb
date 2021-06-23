@@ -73,6 +73,9 @@ func (s *Storage) initConfig() error {
 	if s.LockPollingInterval == 0 {
 		s.LockPollingInterval = lockPollingInterval
 	}
+	if isEmpty(s.KeyListDataKey[:]) {
+		s.KeyListDataKey = crypto.HashBytes([]byte("key_list"))
+	}
 	return nil
 }
 
@@ -327,6 +330,7 @@ func (s *Storage) keyList() (map[string]bool, uint64, error) {
 	}
 	return keyList, rev, nil
 }
+
 func isEmpty(data []byte) bool {
 	for _, v := range data {
 		if v > 0 {

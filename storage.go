@@ -253,8 +253,11 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	lockKey := fmt.Sprintf("LOCK-%s", key)
 
 	// Check for existing lock
+	var it Item
+	var rev uint64
+	var err error
 	for {
-		it, _, err := s.getItem(lockKey)
+		it, rev, err = s.getItem(lockKey)
 		if err != nil && !errors.Contains(err, errNotExist) {
 			return err
 		}
@@ -283,7 +286,18 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 	// lock doesn't exist, create it
 	contents := []byte(time.Now().Add(time.Duration(s.LockTimeout)).Format(time.RFC3339))
-	return s.Store(lockKey, contents)
+
+	it.PrimaryKey = lockKey
+	it.Contents = contents
+	it.LastUpdated = time.Now().UTC()
+	bytes, err := json.Marshal(it)
+	if err != nil {
+		return errors.AddContext(err, "failed to marshal the item record")
+	}
+	dataKey := crypto.HashBytes([]byte(it.PrimaryKey))
+	return s.SkyDB.Write(bytes, dataKey, rev+1)
+
+	//return s.Store(lockKey, contents)
 }
 
 // Unlock releases the lock for key. This method must ONLY be
@@ -297,8 +311,24 @@ func (s *Storage) Unlock(key string) error {
 	}
 
 	lockKey := fmt.Sprintf("LOCK-%s", key)
-
-	return s.Delete(lockKey)
+	it, rev, err := s.getItem(lockKey)
+	if err != nil && !errors.Contains(err, errNotExist) {
+		return err
+	}
+	// if lock doesn't exist or is empty, break to create a new one
+	if isEmpty(it.Contents) {
+		return nil
+	}
+	it.PrimaryKey = lockKey
+	it.Contents = emptyRegistryEntry[:]
+	it.LastUpdated = time.Now().UTC()
+	bytes, err := json.Marshal(it)
+	if err != nil {
+		return errors.AddContext(err, "failed to marshal the item record")
+	}
+	dataKey := crypto.HashBytes([]byte(it.PrimaryKey))
+	return s.SkyDB.Write(bytes, dataKey, rev+1)
+	//return s.Delete(lockKey)
 }
 
 // getItem fetches an ItemRecord from SkyDB.

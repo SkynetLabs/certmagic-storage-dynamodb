@@ -81,6 +81,7 @@ func (s *Storage) initConfig() error {
 
 // Store puts value at key.
 func (s *Storage) Store(key string, value []byte) error {
+	fmt.Println(" >>> Store ", key)
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -140,6 +141,7 @@ func (s *Storage) Store(key string, value []byte) error {
 
 // Load retrieves the value at key.
 func (s *Storage) Load(key string) ([]byte, error) {
+	fmt.Println(" >>> Load ", key)
 	if err := s.initConfig(); err != nil {
 		return []byte{}, err
 	}
@@ -152,23 +154,23 @@ func (s *Storage) Load(key string) ([]byte, error) {
 	if err != nil {
 		return []byte{}, err
 	}
+	fmt.Println(" >>> Load ", key, string(domainItem.Contents))
 	return domainItem.Contents, err
 }
 
 // Delete deletes key.
 func (s *Storage) Delete(key string) error {
+	fmt.Println(" >>> Delete ", key)
 	return s.Store(key, emptyRegistryEntry[:])
 }
 
 // Exists returns true if the key exists
 // and there was no error checking.
 func (s *Storage) Exists(key string) bool {
-
 	cert, err := s.Load(key)
 	if err == nil && !isEmpty(cert[:]) {
 		return true
 	}
-
 	return false
 }
 
@@ -178,6 +180,7 @@ func (s *Storage) Exists(key string) bool {
 // should be walked); otherwise, only keys
 // prefixed exactly by prefix will be listed.
 func (s *Storage) List(prefix string, _ bool) ([]string, error) {
+	fmt.Println(" >>> List ", prefix)
 	if err := s.initConfig(); err != nil {
 		return []string{}, err
 	}
@@ -200,11 +203,13 @@ func (s *Storage) List(prefix string, _ bool) ([]string, error) {
 			matchingKeys = append(matchingKeys, key)
 		}
 	}
+	fmt.Printf(" >>> List %s, %v\n", prefix, matchingKeys)
 	return matchingKeys, nil
 }
 
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
+	fmt.Println(" >>> Stat ", key)
 	domainItem, _, err := s.getItem(key)
 	if err != nil && !errors.Contains(err, errNotExist) {
 		return certmagic.KeyInfo{}, nil
@@ -212,12 +217,14 @@ func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 	if err != nil {
 		return certmagic.KeyInfo{}, err
 	}
-	return certmagic.KeyInfo{
+	ki := certmagic.KeyInfo{
 		Key:        key,
 		Modified:   domainItem.LastUpdated,
 		Size:       int64(len(domainItem.Contents)),
 		IsTerminal: true,
-	}, nil
+	}
+	fmt.Printf(" >>> Stat %s: %+v\n", key, ki)
+	return ki, nil
 }
 
 // Lock acquires the lock for key, blocking until the lock
@@ -238,6 +245,7 @@ func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 // case Unlock is unable to be called due to some sort of network
 // failure or system crash.
 func (s *Storage) Lock(ctx context.Context, key string) error {
+	fmt.Println(" >>> Lock ", key)
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -283,6 +291,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 // critical section is finished, even if it errored or timed
 // out. Unlock cleans up any resources allocated during Lock.
 func (s *Storage) Unlock(key string) error {
+	fmt.Println(" >>> Unlock ", key)
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -294,6 +303,7 @@ func (s *Storage) Unlock(key string) error {
 
 // getItem fetches an ItemRecord from SkyDB.
 func (s *Storage) getItem(key string) (Item, uint64, error) {
+	fmt.Println(" >>> getItem:", key)
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
 	// The string check is annoying and probably unnecessary but I want to get this working.
@@ -312,10 +322,12 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	if err != nil {
 		return Item{}, 0, err
 	}
+	fmt.Printf(" >>> getItem: %s, %+v, %d\n", key, it, rev)
 	return it, rev, nil
 }
 
 func (s *Storage) keyList() (map[string]bool, uint64, error) {
+	fmt.Println(" >>> Fetching keylist. DataKey: " + string(s.KeyListDataKey[:]))
 	keyList := make(map[string]bool)
 	klData, rev, err := s.SkyDB.Read(s.KeyListDataKey)
 	if err != nil {
@@ -327,6 +339,7 @@ func (s *Storage) keyList() (map[string]bool, uint64, error) {
 			return nil, 0, errors.AddContext(err, "failed to unmarshal key list")
 		}
 	}
+	fmt.Printf(">>> Keylist: %+v\n", keyList)
 	return keyList, rev, nil
 }
 

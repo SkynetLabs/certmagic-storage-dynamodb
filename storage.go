@@ -248,7 +248,6 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	for {
 		it, _, err := s.getItem(lockKey)
 		if err != nil && !errors.Contains(err, errNotExist) {
-			fmt.Println("Err: Lock:", err.Error())
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one

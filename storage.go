@@ -245,6 +245,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	for {
 		it, _, err := s.getItem(lockKey)
 		if err != nil && !errors.Contains(err, errNotExist) {
+			fmt.Println("Err: Lock:", err.Error())
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
@@ -293,7 +294,8 @@ func (s *Storage) Unlock(key string) error {
 func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
-	if err != nil && errors.Contains(err, skydb.ErrNotFound) {
+	// The string check is annoying and probably unnecessary but I want to get this working.
+	if err != nil && (errors.Contains(err, skydb.ErrNotFound) || strings.Contains(err.Error(), "registry entry not found")) {
 		return Item{}, 0, errNotExist
 	}
 	if err != nil {

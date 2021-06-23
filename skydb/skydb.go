@@ -16,7 +16,7 @@ import (
 	"go.sia.tech/siad/types"
 )
 
-var ErrNotFound = errors.New("entry not found")
+var ErrNotFound = errors.New("skydb entry not found")
 
 // SkyDBI is the interface for communicating with SkyDB. We use an interface, so
 // we can easily override it for testing purposes.
@@ -61,11 +61,12 @@ func New() (*SkyDB, error) {
 // Read retrieves from SkyDB the data that corresponds to the given key set.
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
-	if err != nil && strings.Contains(err.Error(), "registry entry not found within given time") {
+	// This error string covers both "not found" and "not found in time".
+	if err != nil && strings.Contains(err.Error(), "registry entry not found") {
 		return nil, 0, ErrNotFound
 	}
 	if err != nil {
-		return nil, 0, errors.AddContext(err, "failed to read from registry")
+		return nil, 0, errors.AddContext(err, "skydb failed to read from registry")
 	}
 	b, err := db.Client.SkynetSkylinkGet(s.String())
 	if err != nil {

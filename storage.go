@@ -82,50 +82,35 @@ func (s *Storage) initConfig() error {
 // Store puts value at key.
 func (s *Storage) Store(key string, value []byte) error {
 	fmt.Println(" >>> Store ", key)
-	if err := s.initConfig(); err != nil {
+	var err error
+	if err = s.initConfig(); err != nil {
 		return err
 	}
 
 	if key == "" {
 		return errors.New("key must not be empty")
 	}
+	// Are we deleting the entry? If we're not deleting it then we're adding it.
+	isDeletion := slicesEqual(value, emptyRegistryEntry[:])
+	for tries := 3; tries > 0; tries-- {
+		if isDeletion {
+			err = s.keyListDelete(key)
+		} else {
+			err = s.keyListAdd(key)
+		}
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return errors.AddContext(err, "failed to modify keylist")
+	}
+
 	// Get the item.
 	it, rev, err := s.getItem(key)
 	if err != nil && !errors.Contains(err, errNotExist) {
 		return err
 	}
-	keyList, keyListRev, err := s.keyList()
-	if err != nil && !errors.Contains(err, skydb.ErrNotFound) {
-		return err
-	}
-	if keyList == nil {
-		keyList = make(map[string]bool)
-	}
-
-	keyListChanged := false
-	// Are we deleting the entry? If so, remove the key from the key list.
-	// Otherwise add it to the list.
-	if slicesEqual(value, emptyRegistryEntry[:]) {
-		delete(keyList, key)
-		keyListChanged = true
-	} else {
-		_, exists := keyList[key]
-		if !exists {
-			keyList[key] = true
-			keyListChanged = true
-		}
-	}
-	if keyListChanged {
-		bytes, err := json.Marshal(keyList)
-		if err != nil {
-			return errors.AddContext(err, "failed to serialise a new key list")
-		}
-		err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
-		if err != nil {
-			return errors.AddContext(err, "failed to store the key list")
-		}
-	}
-
 	// Update the item.
 	it.PrimaryKey = key
 	it.Contents = value
@@ -371,6 +356,57 @@ func (s *Storage) keyList() (map[string]bool, uint64, error) {
 	}
 	fmt.Printf(">>> Keylist: %+v\n", keyList)
 	return keyList, rev, nil
+}
+
+// keyListAdd adds the given key to the keylist
+func (s *Storage) keyListAdd(key string) error {
+	keyList, keyListRev, err := s.keyList()
+	if err != nil && !errors.Contains(err, skydb.ErrNotFound) {
+		return err
+	}
+	if keyList == nil {
+		keyList = make(map[string]bool)
+	}
+	// If the key is already in the keylist there's nothing to do.
+	if _, exists := keyList[key]; exists {
+		return nil
+	}
+	keyList[key] = true
+	bytes, err := json.Marshal(keyList)
+	if err != nil {
+		return errors.AddContext(err, "failed to serialise the new key list")
+	}
+	err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
+	if err != nil {
+		return errors.AddContext(err, "failed to store the key list")
+	}
+	return nil
+}
+
+// keyListDelete deletes the given key from the keylist
+func (s *Storage) keyListDelete(key string) error {
+	keyList, keyListRev, err := s.keyList()
+	if err != nil && !errors.Contains(err, skydb.ErrNotFound) {
+		return err
+	}
+	// If the keylist is empty there's nothing to do.
+	if keyList == nil {
+		return nil
+	}
+	// If the key is not in the keylist there's nothing to do.
+	if _, exists := keyList[key]; !exists {
+		return nil
+	}
+	delete(keyList, key)
+	bytes, err := json.Marshal(keyList)
+	if err != nil {
+		return errors.AddContext(err, "failed to serialise the new key list")
+	}
+	err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
+	if err != nil {
+		return errors.AddContext(err, "failed to store the key list")
+	}
+	return nil
 }
 
 func isEmpty(data []byte) bool {

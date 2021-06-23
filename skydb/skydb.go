@@ -16,7 +16,13 @@ import (
 	"go.sia.tech/siad/types"
 )
 
-var ErrNotFound = errors.New("skydb entry not found")
+var (
+	ErrNotFound = errors.New("skydb entry not found")
+
+	// BadRevNum is the error message the registry gives when a given registry
+	// number is already used for a given data key
+	BadRevNum = "provided revision number is already registered"
+)
 
 // SkyDBI is the interface for communicating with SkyDB. We use an interface, so
 // we can easily override it for testing purposes.

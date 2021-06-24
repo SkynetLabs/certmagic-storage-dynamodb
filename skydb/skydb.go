@@ -66,7 +66,7 @@ func New() (*SkyDB, error) {
 
 // Read retrieves from SkyDB the data that corresponds to the given key set.
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
-	fmt.Println(" >>> SkyDB Read ", base64.StdEncoding.EncodeToString(dataKey[:]))
+	//fmt.Println(" >>> SkyDB Read ", base64.StdEncoding.EncodeToString(dataKey[:]))
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
 	// This error string covers both "not found" and "not found in time".
 	if err != nil && strings.Contains(err.Error(), "registry entry not found") {
@@ -79,13 +79,13 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	if err != nil {
 		return nil, 0, errors.AddContext(err, "failed to download data from Skynet")
 	}
-	fmt.Println(" >>> SkyDB Read ", base64.StdEncoding.EncodeToString(dataKey[:]), base64.StdEncoding.EncodeToString(b[:]), rev)
+	///fmt.Println(" >>> SkyDB Read ", base64.StdEncoding.EncodeToString(dataKey[:]), base64.StdEncoding.EncodeToString(b[:]), rev)
 	return b, rev, nil
 }
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
-	fmt.Println(" >>> SkyDB Write ", base64.StdEncoding.EncodeToString(data[:]), base64.StdEncoding.EncodeToString(dataKey[:]), rev)
+	//fmt.Println(" >>> SkyDB Write ", base64.StdEncoding.EncodeToString(data[:]), base64.StdEncoding.EncodeToString(dataKey[:]), rev)
 	skylink, err := uploadData(db.Client, data)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")

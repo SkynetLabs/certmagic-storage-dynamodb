@@ -18,10 +18,6 @@ import (
 
 var (
 	ErrNotFound = errors.New("skydb entry not found")
-
-	// BadRevNum is the error message the registry gives when a given registry
-	// number is already used for a given data key
-	BadRevNum = "provided revision number is already registered"
 )
 
 // SkyDBI is the interface for communicating with SkyDB. We use an interface, so
@@ -66,6 +62,7 @@ func New() (*SkyDB, error) {
 
 // Read retrieves from SkyDB the data that corresponds to the given key set.
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
+	waitUntilSkydReady(db.Client)
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
 	// This error string covers both "not found" and "not found in time".
 	if err != nil && strings.Contains(err.Error(), "registry entry not found") {
@@ -86,6 +83,7 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
+	waitUntilSkydReady(db.Client)
 	skylink, err := uploadData(db.Client, data)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")
@@ -123,7 +121,7 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 	}
 	// Update the registry with that link.
 	spk := types.Ed25519PublicKey(pk)
-	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev).Sign(sk)
+	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev, modules.RegistryTypeWithPubkey).Sign(sk)
 	// skyd might not be ready by the time we execute this, so we want to retry
 	// several times with increasing gaps in between.
 	for i := 0; i < 10; i++ {
@@ -196,4 +194,17 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 		return "", errors.AddContext(err, "failed to upload")
 	}
 	return skylink, nil
+}
+
+// waitUntilSkydReady checks the /daemon/ready endpoint and waits until skyd is
+// fully ready
+func waitUntilSkydReady(c *client.Client) {
+	for {
+		dr, err := c.DaemonReadyGet()
+		if err == nil && dr.Ready && dr.Renter {
+			break
+		}
+		fmt.Println("skyd is not ready, yet. Waiting...")
+		time.Sleep(time.Second)
+	}
 }

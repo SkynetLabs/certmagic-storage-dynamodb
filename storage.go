@@ -12,12 +12,20 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 	"gitlab.com/NebulousLabs/errors"
+	"gitlab.com/SkynetLabs/skyd/skymodules/renter"
 	"go.sia.tech/siad/crypto"
 )
 
 const (
 	lockTimeoutMinutes  = caddy.Duration(5 * time.Minute)
 	lockPollingInterval = caddy.Duration(5 * time.Second)
+
+	// keylistModificationAttempts defines how many times we will try to change
+	// the keylist before giving up.
+	keylistModificationAttempts = 5
+	// keylistModificationSleep defines how long we're going to wait between
+	// modification attempts.
+	keylistModificationSleep = 3
 )
 
 var (
@@ -89,9 +97,11 @@ func (s *Storage) Store(key string, value []byte) error {
 	if key == "" {
 		return errors.New("key must not be empty")
 	}
-	// Are we deleting the entry? If we're not deleting it then we're adding it.
+	// Are we deleting the entry? If we're not deleting item then we're adding item.
 	isDeletion := slicesEqual(value, emptyRegistryEntry[:])
-	for tries := 3; tries > 0; tries-- {
+	// Modifying the keylist might fail because somebody else has locked item.
+	// We will retry several times.
+	for triesLeft := keylistModificationAttempts; triesLeft > 0; triesLeft-- {
 		if isDeletion {
 			err = s.keyListDelete(key)
 		} else {
@@ -100,22 +110,23 @@ func (s *Storage) Store(key string, value []byte) error {
 		if err == nil {
 			break
 		}
+		time.Sleep(keylistModificationSleep * time.Second)
 	}
 	if err != nil {
 		return errors.AddContext(err, "failed to modify keylist")
 	}
 
 	// Get the item.
-	it, rev, err := s.getItem(key)
+	item, rev, err := s.getItem(key)
 	if err != nil && !errors.Contains(err, errNotExist) {
 		return err
 	}
 	// Update the item.
-	it.PrimaryKey = key
-	it.Contents = value
-	it.LastUpdated = time.Now().UTC()
+	item.PrimaryKey = key
+	item.Contents = value
+	item.LastUpdated = time.Now().UTC()
 	// Store the key's new value
-	bytes, err := json.Marshal(it)
+	bytes, err := json.Marshal(item)
 	if err != nil {
 		return errors.AddContext(err, "failed to marshal the item record")
 	}
@@ -228,20 +239,20 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	lockKey := fmt.Sprintf("LOCK-%s", key)
 
 	// Check for existing lock
-	var it Item
+	var item Item
 	var rev uint64
 	var err error
 	for {
-		it, rev, err = s.getItem(lockKey)
+		item, rev, err = s.getItem(lockKey)
 		if err != nil && !errors.Contains(err, errNotExist) {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
-		if isEmpty(it.Contents) {
+		if isEmpty(item.Contents) {
 			break
 		}
 		// Lock exists, check if expired or sleep 5 seconds and check again
-		expires, err := time.Parse(time.RFC3339, string(it.Contents))
+		expires, err := time.Parse(time.RFC3339, string(item.Contents))
 		if err != nil {
 			return err
 		}
@@ -259,17 +270,17 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 		}
 	}
 
-	// lock doesn't exist, create it
+	// lock doesn't exist, create item
 	contents := []byte(time.Now().Add(time.Duration(s.LockTimeout)).Format(time.RFC3339))
 
-	it.PrimaryKey = lockKey
-	it.Contents = contents
-	it.LastUpdated = time.Now().UTC()
-	bytes, err := json.Marshal(it)
+	item.PrimaryKey = lockKey
+	item.Contents = contents
+	item.LastUpdated = time.Now().UTC()
+	bytes, err := json.Marshal(item)
 	if err != nil {
 		return errors.AddContext(err, "failed to marshal the item record")
 	}
-	dataKey := crypto.HashBytes([]byte(it.PrimaryKey))
+	dataKey := crypto.HashBytes([]byte(item.PrimaryKey))
 	return s.SkyDB.Write(bytes, dataKey, rev+1)
 }
 
@@ -307,7 +318,7 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
 	// The string check is annoying and probably unnecessary but I want to get this working.
-	if err != nil && (errors.Contains(err, skydb.ErrNotFound) || strings.Contains(err.Error(), "registry entry not found")) {
+	if err != nil && (errors.Contains(err, skydb.ErrNotFound) || errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout)) {
 		return Item{}, 0, errNotExist
 	}
 	if err != nil {
@@ -317,12 +328,12 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	if isEmpty(data) {
 		return Item{}, 0, errNotExist
 	}
-	var it Item
-	err = json.Unmarshal(data, &it)
+	var item Item
+	err = json.Unmarshal(data, &item)
 	if err != nil {
 		return Item{}, 0, err
 	}
-	return it, rev, nil
+	return item, rev, nil
 }
 
 func (s *Storage) keyList() (map[string]bool, uint64, error) {

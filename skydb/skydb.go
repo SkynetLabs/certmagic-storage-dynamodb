@@ -76,6 +76,9 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 		return nil, 0, errors.AddContext(err, "skydb failed to read from registry")
 	}
 	b, err := db.Client.SkynetSkylinkGet(s.String())
+	if err != nil && strings.Contains(err.Error(), "workers were unable to recover the data by sector root - all workers failed") {
+		return nil, 0, ErrNotFound
+	}
 	if err != nil {
 		return nil, 0, errors.AddContext(err, "failed to download data from Skynet")
 	}

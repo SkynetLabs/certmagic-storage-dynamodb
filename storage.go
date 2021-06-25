@@ -81,8 +81,8 @@ func (s *Storage) initConfig() error {
 
 // Store puts value at key.
 func (s *Storage) Store(key string, value []byte) error {
-	var err error
-	if err = s.initConfig(); err != nil {
+	err := s.initConfig()
+	if err != nil {
 		return err
 	}
 

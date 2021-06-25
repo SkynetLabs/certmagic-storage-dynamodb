@@ -17,6 +17,7 @@ import (
 )
 
 var (
+	// ErrNotFound is returned when an entry is not found.
 	ErrNotFound = errors.New("skydb entry not found")
 )
 
@@ -122,16 +123,7 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 	// Update the registry with that link.
 	spk := types.Ed25519PublicKey(pk)
 	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev, modules.RegistryTypeWithPubkey).Sign(sk)
-	// skyd might not be ready by the time we execute this, so we want to retry
-	// several times with increasing gaps in between.
-	for i := 0; i < 10; i++ {
-		err = c.RegistryUpdate(spk, dataKey, srv.Revision, srv.Signature, sl)
-		if err != nil && strings.Contains(err.Error(), "Module not loaded") {
-			time.Sleep(time.Duration(i) * 15 * time.Second)
-			continue
-		}
-		break
-	}
+	err = c.RegistryUpdate(spk, dataKey, srv.Revision, srv.Signature, sl)
 	if err != nil {
 		return skymodules.Skylink{}, err
 	}
@@ -142,18 +134,7 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 // as the revision.
 func registryRead(c *client.Client, pk crypto.PublicKey, dataKey crypto.Hash) (skymodules.Skylink, uint64, error) {
 	spk := types.Ed25519PublicKey(pk)
-	var srv modules.SignedRegistryValue
-	var err error
-	// skyd might not be ready by the time we execute this, so we want to retry
-	// several times with increasing gaps in between.
-	for i := 0; i < 10; i++ {
-		srv, err = c.RegistryRead(spk, dataKey)
-		if err != nil && strings.Contains(err.Error(), "Module not loaded") {
-			time.Sleep(time.Duration(i) * 15 * time.Second)
-			continue
-		}
-		break
-	}
+	srv, err := c.RegistryRead(spk, dataKey)
 	if err != nil {
 		return skymodules.Skylink{}, 0, errors.AddContext(err, "failed to read from the registry")
 	}
@@ -178,18 +159,7 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 		Mode:     skymodules.DefaultFilePerm,
 		Reader:   bytes.NewReader(content),
 	}
-	var skylink string
-	var err error
-	// skyd might not be ready by the time we execute this, so we want to retry
-	// several times with increasing gaps in between.
-	for i := 0; i < 10; i++ {
-		skylink, _, err = c.SkynetSkyfilePost(*sup)
-		if err != nil && strings.Contains(err.Error(), "Module not loaded") {
-			time.Sleep(time.Duration(i) * 15 * time.Second)
-			continue
-		}
-		break
-	}
+	skylink, _, err := c.SkynetSkyfilePost(*sup)
 	if err != nil {
 		return "", errors.AddContext(err, "failed to upload")
 	}

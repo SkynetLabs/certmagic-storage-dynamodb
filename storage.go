@@ -12,7 +12,6 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 	"gitlab.com/NebulousLabs/errors"
-	"gitlab.com/SkynetLabs/skyd/skymodules/renter"
 	"go.sia.tech/siad/crypto"
 )
 
@@ -408,16 +407,11 @@ func (s *Storage) keyListDelete(key string) error {
 // errNotFound checks the various failure modes of the registry which all mean
 // that the entry was not found.
 func errNotFound(err error) bool {
-	result := err != nil && (errors.Contains(err, skydb.ErrNotFound) || errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout))
-	fmt.Println(" >>> errNotFound:", err, "will return ", result)
-	fmt.Println(" Details ErrNotFound:", errors.Contains(err, skydb.ErrNotFound))
-	fmt.Println(" Details ErrRegistryEntryNotFound:", errors.Contains(err, renter.ErrRegistryEntryNotFound))
-	fmt.Println(" Details ErrRegistryLookupTimeout:", errors.Contains(err, renter.ErrRegistryLookupTimeout))
-
-	result = err!=nil && (strings.Contains(err.Error(), "entry not found"))
-	fmt.Println(" >>> errNotFound (new):", result)
-
-	return result
+	// This check covers all cases:
+	// - skydb.ErrNotFound
+	// - renter.ErrRegistryEntryNotFound
+	// - renter.ErrRegistryLookupTimeout
+	return err != nil && (strings.Contains(err.Error(), "entry not found"))
 }
 
 func isEmpty(data []byte) bool {

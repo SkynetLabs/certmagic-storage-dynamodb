@@ -67,9 +67,11 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
 	// This error string covers both "not found" and "not found in time".
 	if err != nil && (errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout)) {
+		fmt.Println(" >>> Read: Not Found:", err)
 		return nil, 0, ErrNotFound
 	}
 	if err != nil {
+		fmt.Println(" >>> Read: Error:", err)
 		return nil, 0, errors.AddContext(err, "skydb failed to read from registry")
 	}
 	b, err := db.Client.SkynetSkylinkGet(s.String())
@@ -122,7 +124,7 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 	}
 	// Update the registry with that link.
 	spk := types.Ed25519PublicKey(pk)
-	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev, modules.RegistryTypeWithPubkey).Sign(sk)
+	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev, modules.RegistryTypeWithoutPubkey).Sign(sk)
 	err = c.RegistryUpdate(spk, dataKey, srv.Revision, srv.Signature, sl)
 	if err != nil {
 		return skymodules.Skylink{}, err

@@ -414,7 +414,10 @@ func errNotFound(err error) bool {
 	fmt.Println(" Details ErrRegistryEntryNotFound:", errors.Contains(err, renter.ErrRegistryEntryNotFound))
 	fmt.Println(" Details ErrRegistryLookupTimeout:", errors.Contains(err, renter.ErrRegistryLookupTimeout))
 
-	return err != nil && (errors.Contains(err, skydb.ErrNotFound) || errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout))
+	result = err!=nil && (strings.Contains(err.Error(), "entry not found"))
+	fmt.Println(" >>> errNotFound (new):", result)
+
+	return result
 }
 
 func isEmpty(data []byte) bool {

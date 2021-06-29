@@ -318,7 +318,7 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
 	// The string check is annoying and probably unnecessary but I want to get this working.
-	if err != nil && (errors.Contains(err, skydb.ErrNotFound) || errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout)) {
+	if errNotFound(err) {
 		return Item{}, 0, errNotExist
 	}
 	if err != nil {
@@ -339,7 +339,7 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 func (s *Storage) keyList() (map[string]bool, uint64, error) {
 	keyList := make(map[string]bool)
 	klData, rev, err := s.SkyDB.Read(s.KeyListDataKey)
-	if err != nil {
+	if err != nil && !errNotFound(err) {
 		return nil, 0, errors.AddContext(err, "failed to get key list from SkyDB")
 	}
 	if !isEmpty(klData) {
@@ -354,7 +354,7 @@ func (s *Storage) keyList() (map[string]bool, uint64, error) {
 // keyListAdd adds the given key to the keylist
 func (s *Storage) keyListAdd(key string) error {
 	keyList, keyListRev, err := s.keyList()
-	if err != nil && !errors.Contains(err, skydb.ErrNotFound) {
+	if err != nil && !errNotFound(err) {
 		return err
 	}
 	if keyList == nil {
@@ -379,7 +379,7 @@ func (s *Storage) keyListAdd(key string) error {
 // keyListDelete deletes the given key from the keylist
 func (s *Storage) keyListDelete(key string) error {
 	keyList, keyListRev, err := s.keyList()
-	if err != nil && !errors.Contains(err, skydb.ErrNotFound) {
+	if err != nil && !errNotFound(err) {
 		return err
 	}
 	// If the keylist is empty there's nothing to do.
@@ -400,6 +400,12 @@ func (s *Storage) keyListDelete(key string) error {
 		return errors.AddContext(err, "failed to store the key list")
 	}
 	return nil
+}
+
+// errNotFound checks the various failure modes of the registry which all mean
+// that the entry was not found.
+func errNotFound(err error) bool {
+	return err != nil && (errors.Contains(err, skydb.ErrNotFound) || errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout))
 }
 
 func isEmpty(data []byte) bool {

@@ -110,6 +110,9 @@ func (s *Storage) Store(key string, value []byte) error {
 		if err == nil {
 			break
 		}
+		if triesLeft > 0 {
+			fmt.Println("failed to modify keylist, will try again. error:", err)
+		}
 		time.Sleep(keylistModificationSleep * time.Second)
 	}
 	if err != nil {
@@ -405,6 +408,12 @@ func (s *Storage) keyListDelete(key string) error {
 // errNotFound checks the various failure modes of the registry which all mean
 // that the entry was not found.
 func errNotFound(err error) bool {
+	result := err != nil && (errors.Contains(err, skydb.ErrNotFound) || errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout))
+	fmt.Println(" >>> errNotFound:", err, "will return ", result)
+	fmt.Println(" Details ErrNotFound:", errors.Contains(err, skydb.ErrNotFound))
+	fmt.Println(" Details ErrRegistryEntryNotFound:", errors.Contains(err, renter.ErrRegistryEntryNotFound))
+	fmt.Println(" Details ErrRegistryLookupTimeout:", errors.Contains(err, renter.ErrRegistryLookupTimeout))
+
 	return err != nil && (errors.Contains(err, skydb.ErrNotFound) || errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout))
 }
 

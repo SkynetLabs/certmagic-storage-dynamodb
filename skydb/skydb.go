@@ -44,9 +44,9 @@ func New() (*SkyDB, error) {
 		return nil, err
 	}
 	sk, pk := crypto.GenerateKeyPairDeterministic(entropy)
-	skydEndpoint := os.Getenv("SKYDB_ENDPOINT")
+	skydEndpoint := os.Getenv("CADDY_SKYDB_ENDPOINT")
 	if skydEndpoint == "" {
-		return nil, errors.New("missing SKYDB_ENDPOINT environment variable")
+		return nil, errors.New("missing CADDY_SKYDB_ENDPOINT environment variable")
 	}
 	opts, err := client.DefaultOptions()
 	if err != nil {
@@ -96,17 +96,17 @@ func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
 	return nil
 }
 
-// EntropyFromEnv returns the configured value of the SKYDB_ENTROPY environment
+// EntropyFromEnv returns the configured value of the CADDY_SKYDB_ENTROPY environment
 // variable or an error.
 func EntropyFromEnv() (crypto.Hash, error) {
 	var e crypto.Hash
-	eStr := os.Getenv("SKYDB_ENTROPY")
+	eStr := os.Getenv("CADDY_SKYDB_ENTROPY")
 	if eStr == "" {
-		return e, errors.New("missing or empty SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy.")
+		return e, errors.New("missing or empty CADDY_SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy.")
 	}
 	eBytes, err := base64.StdEncoding.DecodeString(eStr)
 	if err != nil || len(eBytes) != 32 {
-		return e, fmt.Errorf("invalid SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy. error: %v", err)
+		return e, fmt.Errorf("invalid CADDY_SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy. error: %v", err)
 	}
 	copy(e[:], eBytes)
 	return e, nil

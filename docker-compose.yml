@@ -6,7 +6,7 @@ services:
     build: .
     command: make
     environment:
-      SKYDB_ENDPOINT: localhost:9980
-      SKYDB_ENTROPY: ZnXVDQI5SIf3B+bBHM6GJe8nuV9yZm9HSO7liWeo6yk=
+      CADDY_SKYDB_ENDPOINT: localhost:9980
+      CADDY_SKYDB_ENTROPY: ZnXVDQI5SIf3B+bBHM6GJe8nuV9yZm9HSO7liWeo6yk=
     volumes:
       - ./:/certmagic-storage-skydb

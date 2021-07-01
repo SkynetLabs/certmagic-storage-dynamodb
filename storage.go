@@ -24,7 +24,7 @@ const (
 	keylistModificationAttempts = 5
 	// keylistModificationSleep defines how long we're going to wait between
 	// modification attempts.
-	keylistModificationSleep = 3
+	keylistModificationSleep = 3 * time.Second
 )
 
 var (
@@ -112,28 +112,18 @@ func (s *Storage) Store(key string, value []byte) error {
 		if triesLeft > 0 {
 			fmt.Println("failed to modify keylist, will try again. error:", err)
 		}
-		time.Sleep(keylistModificationSleep * time.Second)
+		time.Sleep(keylistModificationSleep)
 	}
 	if err != nil {
 		return errors.AddContext(err, "failed to modify keylist")
 	}
 
-	// Get the item.
-	item, rev, err := s.getItem(key)
+	// Get the item in order to get its revision.
+	_, rev, err := s.getItem(key)
 	if err != nil && !errors.Contains(err, errNotExist) {
 		return err
 	}
-	// Update the item.
-	item.PrimaryKey = key
-	item.Contents = value
-	item.LastUpdated = time.Now().UTC()
-	// Store the key's new value
-	bytes, err := json.Marshal(item)
-	if err != nil {
-		return errors.AddContext(err, "failed to marshal the item record")
-	}
-	dataKey := crypto.HashBytes([]byte(key))
-	return s.SkyDB.Write(bytes, dataKey, rev+1)
+	return s.writeItem(key, value, rev+1)
 }
 
 // Load retrieves the value at key.
@@ -274,16 +264,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 	// lock doesn't exist, create item
 	contents := []byte(time.Now().Add(time.Duration(s.LockTimeout)).Format(time.RFC3339))
-
-	item.PrimaryKey = lockKey
-	item.Contents = contents
-	item.LastUpdated = time.Now().UTC()
-	bytes, err := json.Marshal(item)
-	if err != nil {
-		return errors.AddContext(err, "failed to marshal the item record")
-	}
-	dataKey := crypto.HashBytes([]byte(item.PrimaryKey))
-	return s.SkyDB.Write(bytes, dataKey, rev+1)
+	return s.writeItem(lockKey, contents, rev+1)
 }
 
 // Unlock releases the lock for key. This method must ONLY be
@@ -304,15 +285,7 @@ func (s *Storage) Unlock(key string) error {
 	if isEmpty(it.Contents) {
 		return nil
 	}
-	it.PrimaryKey = lockKey
-	it.Contents = emptyRegistryEntry[:]
-	it.LastUpdated = time.Now().UTC()
-	bytes, err := json.Marshal(it)
-	if err != nil {
-		return errors.AddContext(err, "failed to marshal the item record")
-	}
-	dataKey := crypto.HashBytes([]byte(it.PrimaryKey))
-	return s.SkyDB.Write(bytes, dataKey, rev+1)
+	return s.writeItem(lockKey, emptyRegistryEntry[:], rev+1)
 }
 
 // getItem fetches an ItemRecord from SkyDB.
@@ -402,6 +375,21 @@ func (s *Storage) keyListDelete(key string) error {
 		return errors.AddContext(err, "failed to store the key list")
 	}
 	return nil
+}
+
+// writeItem is a helper that writes a new item to SkyDB.
+func (s *Storage) writeItem(pk string, contents []byte, rev uint64) error {
+	item := Item{
+		PrimaryKey:  pk,
+		Contents:    contents,
+		LastUpdated: time.Now().UTC(),
+	}
+	bytes, err := json.Marshal(item)
+	if err != nil {
+		return errors.AddContext(err, "failed to marshal the item record")
+	}
+	dataKey := crypto.HashBytes([]byte(item.PrimaryKey))
+	return s.SkyDB.Write(bytes, dataKey, rev+1)
 }
 
 // errNotFound checks the various failure modes of the registry which all mean

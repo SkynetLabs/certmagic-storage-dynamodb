@@ -400,8 +400,8 @@ func errNotFound(err error) bool {
 		return false
 	}
 	return errors.Contains(err, skydb.ErrNotFound) ||
-		errors.Contains(err, renter.ErrRegistryEntryNotFound) ||
-		errors.Contains(err, renter.ErrRegistryLookupTimeout)
+		strings.Contains(err.Error(), renter.ErrRegistryEntryNotFound.Error()) ||
+		strings.Contains(err.Error(), renter.ErrRegistryLookupTimeout.Error())
 }
 
 func isEmpty(data []byte) bool {

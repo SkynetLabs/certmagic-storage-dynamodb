@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"gitlab.com/SkynetLabs/skyd/skymodules/renter"
 	"strings"
 	"time"
 
@@ -395,11 +396,12 @@ func (s *Storage) writeItem(pk string, contents []byte, rev uint64) error {
 // errNotFound checks the various failure modes of the registry which all mean
 // that the entry was not found.
 func errNotFound(err error) bool {
-	// This check covers all cases:
-	// - skydb.ErrNotFound
-	// - renter.ErrRegistryEntryNotFound
-	// - renter.ErrRegistryLookupTimeout
-	return err != nil && (strings.Contains(err.Error(), "entry not found"))
+	if err == nil {
+		return false
+	}
+	return errors.Contains(err, skydb.ErrNotFound) ||
+		errors.Contains(err, renter.ErrRegistryEntryNotFound) ||
+		errors.Contains(err, renter.ErrRegistryLookupTimeout)
 }
 
 func isEmpty(data []byte) bool {

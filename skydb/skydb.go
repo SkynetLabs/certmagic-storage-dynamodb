@@ -66,7 +66,6 @@ func New() (*SkyDB, error) {
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	waitUntilSkydReady(db.Client)
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
-	// This error string covers both "not found" and "not found in time".
 	if err != nil && (strings.Contains(err.Error(), renter.ErrRegistryEntryNotFound.Error()) || strings.Contains(err.Error(), renter.ErrRegistryLookupTimeout.Error())) {
 		return nil, 0, ErrNotFound
 	}

@@ -293,7 +293,6 @@ func (s *Storage) Unlock(key string) error {
 func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
-	// The string check is annoying and probably unnecessary but I want to get this working.
 	if errNotFound(err) {
 		return Item{}, 0, errNotExist
 	}

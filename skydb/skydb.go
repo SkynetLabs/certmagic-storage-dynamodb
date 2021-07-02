@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gitlab.com/NebulousLabs/errors"
@@ -66,14 +67,14 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 	waitUntilSkydReady(db.Client)
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
 	// This error string covers both "not found" and "not found in time".
-	if err != nil && (errors.Contains(err, renter.ErrRegistryEntryNotFound) || errors.Contains(err, renter.ErrRegistryLookupTimeout)) {
+	if err != nil && (strings.Contains(err.Error(), renter.ErrRegistryEntryNotFound.Error()) || strings.Contains(err.Error(), renter.ErrRegistryLookupTimeout.Error())) {
 		return nil, 0, ErrNotFound
 	}
 	if err != nil {
 		return nil, 0, errors.AddContext(err, "skydb failed to read from registry")
 	}
 	b, err := db.Client.SkynetSkylinkGet(s.String())
-	if err != nil && errors.Contains(err, renter.ErrRootNotFound) {
+	if err != nil && strings.Contains(err.Error(), renter.ErrRootNotFound.Error()) {
 		return nil, 0, ErrNotFound
 	}
 	if err != nil {

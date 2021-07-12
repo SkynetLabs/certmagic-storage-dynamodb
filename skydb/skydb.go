@@ -6,16 +6,21 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/node/api/client"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
+	"gitlab.com/SkynetLabs/skyd/skymodules/renter"
 	"go.sia.tech/siad/crypto"
 	"go.sia.tech/siad/modules"
 	"go.sia.tech/siad/types"
 )
 
-var ErrNotFound = errors.New("entry not found")
+var (
+	// ErrNotFound is returned when an entry is not found.
+	ErrNotFound = errors.New("skydb entry not found")
+)
 
 // SkyDBI is the interface for communicating with SkyDB. We use an interface, so
 // we can easily override it for testing purposes.
@@ -40,9 +45,9 @@ func New() (*SkyDB, error) {
 		return nil, err
 	}
 	sk, pk := crypto.GenerateKeyPairDeterministic(entropy)
-	skydEndpoint := os.Getenv("SKYDB_ENDPOINT")
+	skydEndpoint := os.Getenv("CADDY_SKYDB_ENDPOINT")
 	if skydEndpoint == "" {
-		return nil, errors.New("missing SKYDB_ENDPOINT environment variable")
+		return nil, errors.New("missing CADDY_SKYDB_ENDPOINT environment variable")
 	}
 	opts, err := client.DefaultOptions()
 	if err != nil {
@@ -50,7 +55,7 @@ func New() (*SkyDB, error) {
 	}
 	opts.Address = skydEndpoint
 	skydb := &SkyDB{
-		Client: &client.Client{opts},
+		Client: &client.Client{Options: opts},
 		sk:     sk,
 		pk:     pk,
 	}
@@ -59,14 +64,18 @@ func New() (*SkyDB, error) {
 
 // Read retrieves from SkyDB the data that corresponds to the given key set.
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
+	waitUntilSkydReady(db.Client)
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
-	if err != nil && strings.Contains(err.Error(), "registry entry not found within given time") {
+	if err != nil && (strings.Contains(err.Error(), renter.ErrRegistryEntryNotFound.Error()) || strings.Contains(err.Error(), renter.ErrRegistryLookupTimeout.Error())) {
 		return nil, 0, ErrNotFound
 	}
 	if err != nil {
-		return nil, 0, errors.AddContext(err, "failed to read from registry")
+		return nil, 0, errors.AddContext(err, "skydb failed to read from registry")
 	}
 	b, err := db.Client.SkynetSkylinkGet(s.String())
+	if err != nil && strings.Contains(err.Error(), renter.ErrRootNotFound.Error()) {
+		return nil, 0, ErrNotFound
+	}
 	if err != nil {
 		return nil, 0, errors.AddContext(err, "failed to download data from Skynet")
 	}
@@ -75,6 +84,7 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
+	waitUntilSkydReady(db.Client)
 	skylink, err := uploadData(db.Client, data)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")
@@ -86,27 +96,20 @@ func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
 	return nil
 }
 
-// EntropyFromEnv returns the configured value of the SKYDB_ENTROPY environment
+// EntropyFromEnv returns the configured value of the CADDY_SKYDB_ENTROPY environment
 // variable or an error.
 func EntropyFromEnv() (crypto.Hash, error) {
 	var e crypto.Hash
-	eStr := os.Getenv("SKYDB_ENTROPY")
+	eStr := os.Getenv("CADDY_SKYDB_ENTROPY")
 	if eStr == "" {
-		return e, errors.New("missing or empty SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy.")
+		return e, errors.New("missing or empty CADDY_SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy.")
 	}
 	eBytes, err := base64.StdEncoding.DecodeString(eStr)
 	if err != nil || len(eBytes) != 32 {
-		return e, fmt.Errorf("invalid SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy. error: %v", err)
+		return e, fmt.Errorf("invalid CADDY_SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy. error: %v", err)
 	}
 	copy(e[:], eBytes)
 	return e, nil
-}
-
-// skynetFilePath returns a path that a Skyfile can be uploaded to. The path is
-// based on the provided dataKey.
-func skynetFilePath(dataKey crypto.Hash) (sp skymodules.SiaPath) {
-	sp.Path = fmt.Sprintf("%v/%v/%v/%v", skymodules.SkynetFolder.Path, dataKey[0:2], dataKey[2:4], dataKey[4:])
-	return
 }
 
 // registryWrite updates the registry entry with the given dataKey to contain the
@@ -119,7 +122,7 @@ func registryWrite(c *client.Client, skylink string, sk crypto.SecretKey, pk cry
 	}
 	// Update the registry with that link.
 	spk := types.Ed25519PublicKey(pk)
-	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev).Sign(sk)
+	srv := modules.NewRegistryValue(dataKey, sl.Bytes(), rev, modules.RegistryTypeWithoutPubkey).Sign(sk)
 	err = c.RegistryUpdate(spk, dataKey, srv.Revision, srv.Signature, sl)
 	if err != nil {
 		return skymodules.Skylink{}, err
@@ -161,4 +164,17 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 		return "", errors.AddContext(err, "failed to upload")
 	}
 	return skylink, nil
+}
+
+// waitUntilSkydReady checks the /daemon/ready endpoint and waits until skyd is
+// fully ready
+func waitUntilSkydReady(c *client.Client) {
+	for {
+		dr, err := c.DaemonReadyGet()
+		if err == nil && dr.Ready && dr.Renter {
+			break
+		}
+		fmt.Println("skyd is not ready, yet. Waiting...")
+		time.Sleep(time.Second)
+	}
 }

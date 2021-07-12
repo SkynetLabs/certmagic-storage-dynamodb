@@ -94,6 +94,7 @@ resource "aws_dynamodb_table" "CertMagic" {
 ## Contributing
 Please do, we like reported issues and pull requests. 
 
+
 -->
 
 ## License

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"gitlab.com/SkynetLabs/skyd/skymodules/renter"
 	"strings"
 	"time"
 
@@ -18,6 +19,13 @@ import (
 const (
 	lockTimeoutMinutes  = caddy.Duration(5 * time.Minute)
 	lockPollingInterval = caddy.Duration(5 * time.Second)
+
+	// keylistModificationAttempts defines how many times we will try to change
+	// the keylist before giving up.
+	keylistModificationAttempts = 5
+	// keylistModificationSleep defines how long we're going to wait between
+	// modification attempts.
+	keylistModificationSleep = 3 * time.Second
 )
 
 var (
@@ -73,66 +81,50 @@ func (s *Storage) initConfig() error {
 	if s.LockPollingInterval == 0 {
 		s.LockPollingInterval = lockPollingInterval
 	}
+	if isEmpty(s.KeyListDataKey[:]) {
+		s.KeyListDataKey = crypto.HashBytes([]byte("key_list"))
+	}
 	return nil
 }
 
 // Store puts value at key.
 func (s *Storage) Store(key string, value []byte) error {
-	if err := s.initConfig(); err != nil {
+	err := s.initConfig()
+	if err != nil {
 		return err
 	}
 
 	if key == "" {
 		return errors.New("key must not be empty")
 	}
-	// Get the item.
-	it, rev, err := s.getItem(key)
+	// Are we deleting the entry? If we're not deleting item then we're adding item.
+	isDeletion := slicesEqual(value, emptyRegistryEntry[:])
+	// Modifying the keylist might fail because somebody else has locked item.
+	// We will retry several times.
+	for triesLeft := keylistModificationAttempts; triesLeft > 0; triesLeft-- {
+		if isDeletion {
+			err = s.keyListDelete(key)
+		} else {
+			err = s.keyListAdd(key)
+		}
+		if err == nil {
+			break
+		}
+		if triesLeft > 0 {
+			fmt.Println("failed to modify keylist, will try again. error:", err)
+		}
+		time.Sleep(keylistModificationSleep)
+	}
+	if err != nil {
+		return errors.AddContext(err, "failed to modify keylist")
+	}
+
+	// Get the item in order to get its revision.
+	_, rev, err := s.getItem(key)
 	if err != nil && !errors.Contains(err, errNotExist) {
 		return err
 	}
-	keyList, keyListRev, err := s.keyList()
-	if err != nil && !errors.Contains(err, skydb.ErrNotFound) {
-		return err
-	}
-	if keyList == nil {
-		keyList = make(map[string]bool)
-	}
-
-	keyListChanged := false
-	// Are we deleting the entry? If so, remove the key from the key list.
-	// Otherwise add it to the list.
-	if slicesEqual(value, emptyRegistryEntry[:]) {
-		delete(keyList, key)
-		keyListChanged = true
-	} else {
-		_, exists := keyList[key]
-		if !exists {
-			keyList[key] = true
-			keyListChanged = true
-		}
-	}
-	if keyListChanged {
-		bytes, err := json.Marshal(keyList)
-		if err != nil {
-			return errors.AddContext(err, "failed to serialise a new key list")
-		}
-		err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
-		if err != nil {
-			return errors.AddContext(err, "failed to store the key list")
-		}
-	}
-
-	// Update the item.
-	it.PrimaryKey = key
-	it.Contents = value
-	it.LastUpdated = time.Now().UTC()
-	// Store the key's new value
-	bytes, err := json.Marshal(it)
-	if err != nil {
-		return errors.AddContext(err, "failed to marshal the item record")
-	}
-	dataKey := crypto.HashBytes([]byte(key))
-	return s.SkyDB.Write(bytes, dataKey, rev+1)
+	return s.writeItem(key, value, rev+1)
 }
 
 // Load retrieves the value at key.
@@ -160,12 +152,10 @@ func (s *Storage) Delete(key string) error {
 // Exists returns true if the key exists
 // and there was no error checking.
 func (s *Storage) Exists(key string) bool {
-
 	cert, err := s.Load(key)
 	if err == nil && !isEmpty(cert[:]) {
 		return true
 	}
-
 	return false
 }
 
@@ -242,17 +232,20 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	lockKey := fmt.Sprintf("LOCK-%s", key)
 
 	// Check for existing lock
+	var item Item
+	var rev uint64
+	var err error
 	for {
-		it, _, err := s.getItem(lockKey)
+		item, rev, err = s.getItem(lockKey)
 		if err != nil && !errors.Contains(err, errNotExist) {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
-		if isEmpty(it.Contents) {
+		if isEmpty(item.Contents) {
 			break
 		}
 		// Lock exists, check if expired or sleep 5 seconds and check again
-		expires, err := time.Parse(time.RFC3339, string(it.Contents))
+		expires, err := time.Parse(time.RFC3339, string(item.Contents))
 		if err != nil {
 			return err
 		}
@@ -270,9 +263,9 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 		}
 	}
 
-	// lock doesn't exist, create it
+	// lock doesn't exist, create item
 	contents := []byte(time.Now().Add(time.Duration(s.LockTimeout)).Format(time.RFC3339))
-	return s.Store(lockKey, contents)
+	return s.writeItem(lockKey, contents, rev+1)
 }
 
 // Unlock releases the lock for key. This method must ONLY be
@@ -285,15 +278,22 @@ func (s *Storage) Unlock(key string) error {
 	}
 
 	lockKey := fmt.Sprintf("LOCK-%s", key)
-
-	return s.Delete(lockKey)
+	it, rev, err := s.getItem(lockKey)
+	if err != nil && !errors.Contains(err, errNotExist) {
+		return err
+	}
+	// if lock doesn't exist or is empty, break to create a new one
+	if isEmpty(it.Contents) {
+		return nil
+	}
+	return s.writeItem(lockKey, emptyRegistryEntry[:], rev+1)
 }
 
 // getItem fetches an ItemRecord from SkyDB.
 func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
-	if err != nil && errors.Contains(err, skydb.ErrNotFound) {
+	if errNotFound(err) {
 		return Item{}, 0, errNotExist
 	}
 	if err != nil {
@@ -303,18 +303,18 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	if isEmpty(data) {
 		return Item{}, 0, errNotExist
 	}
-	var it Item
-	err = json.Unmarshal(data, &it)
+	var item Item
+	err = json.Unmarshal(data, &item)
 	if err != nil {
 		return Item{}, 0, err
 	}
-	return it, rev, nil
+	return item, rev, nil
 }
 
 func (s *Storage) keyList() (map[string]bool, uint64, error) {
 	keyList := make(map[string]bool)
 	klData, rev, err := s.SkyDB.Read(s.KeyListDataKey)
-	if err != nil {
+	if err != nil && !errNotFound(err) {
 		return nil, 0, errors.AddContext(err, "failed to get key list from SkyDB")
 	}
 	if !isEmpty(klData) {
@@ -325,6 +325,84 @@ func (s *Storage) keyList() (map[string]bool, uint64, error) {
 	}
 	return keyList, rev, nil
 }
+
+// keyListAdd adds the given key to the keylist
+func (s *Storage) keyListAdd(key string) error {
+	keyList, keyListRev, err := s.keyList()
+	if err != nil && !errNotFound(err) {
+		return err
+	}
+	if keyList == nil {
+		keyList = make(map[string]bool)
+	}
+	// If the key is already in the keylist there's nothing to do.
+	if _, exists := keyList[key]; exists {
+		return nil
+	}
+	keyList[key] = true
+	bytes, err := json.Marshal(keyList)
+	if err != nil {
+		return errors.AddContext(err, "failed to serialise the new key list")
+	}
+	err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
+	if err != nil {
+		return errors.AddContext(err, "failed to store the key list")
+	}
+	return nil
+}
+
+// keyListDelete deletes the given key from the keylist
+func (s *Storage) keyListDelete(key string) error {
+	keyList, keyListRev, err := s.keyList()
+	if err != nil && !errNotFound(err) {
+		return err
+	}
+	// If the keylist is empty there's nothing to do.
+	if keyList == nil {
+		return nil
+	}
+	// If the key is not in the keylist there's nothing to do.
+	if _, exists := keyList[key]; !exists {
+		return nil
+	}
+	delete(keyList, key)
+	bytes, err := json.Marshal(keyList)
+	if err != nil {
+		return errors.AddContext(err, "failed to serialise the new key list")
+	}
+	err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
+	if err != nil {
+		return errors.AddContext(err, "failed to store the key list")
+	}
+	return nil
+}
+
+// writeItem is a helper that writes a new item to SkyDB.
+func (s *Storage) writeItem(pk string, contents []byte, rev uint64) error {
+	item := Item{
+		PrimaryKey:  pk,
+		Contents:    contents,
+		LastUpdated: time.Now().UTC(),
+	}
+	bytes, err := json.Marshal(item)
+	if err != nil {
+		return errors.AddContext(err, "failed to marshal the item record")
+	}
+	dataKey := crypto.HashBytes([]byte(item.PrimaryKey))
+	return s.SkyDB.Write(bytes, dataKey, rev+1)
+}
+
+// errNotFound checks the various failure modes of the registry which all mean
+// that the entry was not found.
+func errNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Contains(err, skydb.ErrNotFound) ||
+		strings.Contains(err.Error(), renter.ErrRegistryEntryNotFound.Error()) ||
+		strings.Contains(err.Error(), renter.ErrRegistryLookupTimeout.Error())
+}
+
 func isEmpty(data []byte) bool {
 	for _, v := range data {
 		if v > 0 {

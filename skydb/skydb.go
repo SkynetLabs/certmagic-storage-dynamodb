@@ -169,10 +169,20 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 // waitUntilSkydReady checks the /daemon/ready endpoint and waits until skyd is
 // fully ready
 func waitUntilSkydReady(c *client.Client) {
+	// Add a 5 minute hard deadline. If skyd hasn't started until then we'll try
+	// to reach it and fail. Caddy will exit with an error and docker will
+	// restart it.
+	deadline := time.After(5 * time.Minute)
 	for {
 		dr, err := c.DaemonReadyGet()
 		if err == nil && dr.Ready && dr.Renter {
 			break
+		}
+		select {
+		case <-deadline:
+			fmt.Println("skyd failed to start in time")
+			return
+		default:
 		}
 		fmt.Println("skyd is not ready, yet. Waiting...")
 		time.Sleep(time.Second)

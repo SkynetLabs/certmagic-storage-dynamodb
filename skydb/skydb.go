@@ -17,6 +17,12 @@ import (
 	"go.sia.tech/siad/types"
 )
 
+const (
+	// maxWaitUntilSkynetReady defines how long we're willing to wait for skyd
+	// to be ready before we give up.
+	maxWaitUntilSkynetReady = 5 * time.Minute
+)
+
 var (
 	// ErrNotFound is returned when an entry is not found.
 	ErrNotFound = errors.New("skydb entry not found")
@@ -64,7 +70,10 @@ func New() (*SkyDB, error) {
 
 // Read retrieves from SkyDB the data that corresponds to the given key set.
 func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
-	waitUntilSkydReady(db.Client)
+	err := waitUntilSkydReady(db.Client)
+	if err != nil {
+		return nil, 0, err
+	}
 	s, rev, err := registryRead(db.Client, db.pk, dataKey)
 	if err != nil && (strings.Contains(err.Error(), renter.ErrRegistryEntryNotFound.Error()) || strings.Contains(err.Error(), renter.ErrRegistryLookupTimeout.Error())) {
 		return nil, 0, ErrNotFound
@@ -84,7 +93,10 @@ func (db SkyDB) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
 
 // Write stores the given `data` in SkyDB under the given key set.
 func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
-	waitUntilSkydReady(db.Client)
+	err := waitUntilSkydReady(db.Client)
+	if err != nil {
+		return err
+	}
 	skylink, err := uploadData(db.Client, data)
 	if err != nil {
 		return errors.AddContext(err, "failed to upload data")
@@ -168,13 +180,20 @@ func uploadData(c *client.Client, content []byte) (string, error) {
 
 // waitUntilSkydReady checks the /daemon/ready endpoint and waits until skyd is
 // fully ready
-func waitUntilSkydReady(c *client.Client) {
+func waitUntilSkydReady(c *client.Client) error {
 	for {
 		dr, err := c.DaemonReadyGet()
 		if err == nil && dr.Ready && dr.Renter {
 			break
 		}
+		select {
+		case <-time.After(maxWaitUntilSkynetReady):
+			fmt.Println("skyd failed to start in time")
+			return err
+		default:
+		}
 		fmt.Println("skyd is not ready, yet. Waiting...")
 		time.Sleep(time.Second)
 	}
+	return nil
 }

@@ -1,7 +1,7 @@
 # envVars defines all the environment variables the project depends on. These
 # are typically provided by docker-compose files or .env files.
 envVars= \
-	CADDY_SKYDB_ENTROPY=lJAuxnufpy7BbNCbVUKWShIinDBipdnd1hr/d/ZqHLI= \
+	CADDY_SKYDB_ENTROPY=94902ec67b9fa72ec16cd09b5542964a12229c3062a5d9ddd61aff77f66a1cb2 \
 	CADDY_SKYDB_ENDPOINT=localhost:9980
 
 deps:

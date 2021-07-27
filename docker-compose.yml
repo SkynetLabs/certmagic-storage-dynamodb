@@ -7,6 +7,6 @@ services:
     command: make
     environment:
       CADDY_SKYDB_ENDPOINT: localhost:9980
-      CADDY_SKYDB_ENTROPY: ZnXVDQI5SIf3B+bBHM6GJe8nuV9yZm9HSO7liWeo6yk=
+      CADDY_SKYDB_ENTROPY: 6675d50d02394887f707e6c11cce8625ef27b95f72666f4748eee58967a8eb29
     volumes:
       - ./:/certmagic-storage-skydb

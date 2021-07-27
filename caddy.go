@@ -1,7 +1,7 @@
 package skydbstorage
 
 import (
-	"encoding/base64"
+	"encoding/hex"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/certmagic"
@@ -35,7 +35,7 @@ func (s *Storage) CertMagicStorage() (certmagic.Storage, error) {
 // UnmarshalCaddyfile sets up the storage module from Caddyfile tokens. Syntax:
 //
 // skydb {
-// 		key_list_datakey <base64 encoded dataKey>
+// 		key_list_datakey <hex encoded dataKey>
 // }
 //
 // Optional. If not provided, the hardcoded key will be used.
@@ -50,7 +50,7 @@ func (s *Storage) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.NextArg() {
 					return d.ArgErr()
 				}
-				dk, err := base64.StdEncoding.DecodeString(d.Val())
+				dk, err := hex.DecodeString(d.Val())
 				if err != nil {
 					return d.Errf("failed to decode key list dataKey. Error: %v", err)
 				}

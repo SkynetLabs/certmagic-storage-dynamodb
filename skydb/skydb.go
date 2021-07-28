@@ -2,7 +2,7 @@ package skydb
 
 import (
 	"bytes"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -108,17 +108,17 @@ func (db SkyDB) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
 	return nil
 }
 
-// EntropyFromEnv returns the configured value of the CADDY_SKYDB_ENTROPY environment
-// variable or an error.
+// EntropyFromEnv returns the configured value of the CADDY_SKYDB_ENTROPY
+// environment variable or an error.
 func EntropyFromEnv() (crypto.Hash, error) {
 	var e crypto.Hash
 	eStr := os.Getenv("CADDY_SKYDB_ENTROPY")
 	if eStr == "" {
-		return e, errors.New("missing or empty CADDY_SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy.")
+		return e, errors.New("missing or empty CADDY_SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of hex-encoded entropy.")
 	}
-	eBytes, err := base64.StdEncoding.DecodeString(eStr)
-	if err != nil || len(eBytes) != 32 {
-		return e, fmt.Errorf("invalid CADDY_SKYDB_ENTROPY environment variable. it needs to contain 32 bytes of base64 encoded entropy. error: %v", err)
+	eBytes, err := hex.DecodeString(eStr)
+	if err != nil {
+		return e, err
 	}
 	copy(e[:], eBytes)
 	return e, nil
